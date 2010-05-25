@@ -68,11 +68,11 @@ sub pod_file_ok {
 #							}
 						}
 					} else {
-						# Check for internal section
-						if ( exists $own_sections->{ $to } ) {
-							$Test->diag( "$file:$linenum:$column - Internal section link - recommend 'L</$to>'" );
-						} else {
-							if ( ! _known_podfile( $to ) ) {
+						if ( ! _known_podfile( $to ) ) {
+							# Check for internal section
+							if ( exists $own_sections->{ $to } ) {
+								$Test->diag( "$file:$linenum:$column - Internal section link - recommend 'L</$to>'" );
+							} else {
 								# Sometimes we find a manpage but not the pod...
 								if ( _known_manpage( $to ) ) {
 									$Test->diag( "$file:$linenum:$column - Skipping pod link '$to' because it is a valid manpage" );
