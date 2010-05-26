@@ -22,6 +22,10 @@ my %tests = (
 		pod		=> "=head1 NAME\n\nHello from Foobar! Please visit L<Test::More> for more info!",
 		actual_ok	=> 1,
 	},
+	'pass_cpan'		=> {
+		pod		=> "=head1 NAME\n\nHello from Foobar! Please visit L<Acme::Drunk> for more info!",
+		actual_ok	=> 1,
+	},
 	'invalid'	=> {
 		pod		=> "=head1 NAME\n\nHello from Foobar! Please visit L<More::Fluffy::Stuff> for more info!",
 		actual_ok	=> 0,
@@ -77,7 +81,7 @@ foreach my $t ( keys %tests ) {
 				my( $fh, $filename ) = tempfile( UNLINK => 1 );
 				$fh->autoflush( 1 );
 				print $fh delete $tests{ $t }{ pod };
-				pod_file_ok( $filename );
+				Test::Pod::LinkCheck->new->pod_ok( $filename );
 			},
 		);
 	};

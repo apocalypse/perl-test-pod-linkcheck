@@ -1,10 +1,6 @@
 #!/usr/bin/perl
 
-use Test::More;
+use Test::Pod::LinkCheck;
 
-eval "use Test::Pod::LinkCheck";
-if ( $@ ) {
-	plan skip_all => 'Test::Pod::LinkCheck required for testing POD';
-} else {
-	all_pod_files_ok();
-}
+# run the test!
+Test::Pod::LinkCheck->new->all_pod_ok;

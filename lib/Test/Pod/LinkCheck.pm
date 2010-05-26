@@ -3,141 +3,274 @@ package Test::Pod::LinkCheck;
 # ABSTRACT: Tests POD for invalid links
 
 # Import the modules we need
+use Moose 1.01;
 use Test::Pod 1.44 ();
 use App::PodLinkCheck::ParseLinks 4;
 use App::PodLinkCheck::ParseSections 4;
-use Capture::Tiny 0.06 qw( capture_merged );
 
 # setup our tests and etc
 use Test::Builder 0.94;
 my $Test = Test::Builder->new;
 
-# auto-export our 2 subs
-use base qw( Exporter );
-our @EXPORT = qw( pod_file_ok all_pod_files_ok ); ## no critic ( ProhibitAutomaticExportation )
+# we init CPANPLUS only once per program!
+my $init_cpan = undef;
 
-sub pod_file_ok {
+# export our 2 subs
+use base qw( Exporter );
+our @EXPORT_OK = qw( pod_ok all_pod_ok );
+
+=attr check_cpan
+
+If disabled, this module will not check the CPAN module database to see if a link is a valid CPAN module or not. As of now
+this module only supports L<CPANPLUS> as the backend, others may be added.
+
+The default is: true
+
+=attr cpan_section_err
+
+If enabled, a link pointing to a CPAN module's specific section is treated as an error. Since the module isn't installed we
+are unable to verify the section actually exists.
+
+The default is: false
+
+=attr verbose
+
+If enabled, this module will print extra diagnostics for the links it's checking.
+
+The default is: true
+
+=cut
+
+has 'check_cpan' => (
+	is	=> 'rw',
+	isa	=> 'Bool',
+	default	=> 1,
+);
+
+has 'cpan_section_err' => (
+	is	=> 'rw',
+	isa	=> 'Bool',
+	default	=> 0,
+);
+
+has 'verbose' => (
+	is	=> 'rw',
+	isa	=> 'Bool',
+	default	=> 1,
+);
+
+has 'cache' => (
+	is	=> 'ro',
+	isa	=> 'HashRef',
+	default	=> sub { {} },
+);
+
+=method pod_ok
+
+Accepts the filename to check, and an optional test name.
+
+This method will pass the test if there is no POD links present in the POD or if all links are not an error. Furthermore, if the POD was
+malformed as reported by L<Pod::Simple>, the test will fail and not attempt to check the links.
+
+When it fails, this will show any failing links as diagnostics. Also, some extra information is printed if verbose is enabled.
+
+The default test name is: "LinkCheck test for FILENAME"
+
+=cut
+
+sub pod_ok {
+	my $self = shift;
 	my $file = shift;
+
+	if ( ! ref $self ) {	# Allow function call
+		$file = $self;
+		$self = __PACKAGE__->new;
+	}
+
 	my $name = @_ ? shift : "LinkCheck test for $file";
 
 	if ( ! -f $file ) {
 		$Test->ok( 0, $name );
-		$Test->diag( "$file does not exist" );
+
+		if ( $self->verbose ) {
+			$Test->diag( "Extra: " );
+			$Test->diag( " * '$file' does not exist?" );
+		}
+
 		return 0;
 	}
 
 	# Parse the POD!
 	my $parser = App::PodLinkCheck::ParseLinks->new( {} );
 	my $output;
+
+	# Override some options that the podlinkcheck subclass "helpfully" set for us...
 	$parser->output_string( \$output );
+	$parser->complain_stderr( 0 );
+	$parser->no_errata_section( 0 );
+	$parser->no_whining( 0 );
 	$parser->parse_file( $file );
 
 	# is POD well-formed?
 	if ( $parser->any_errata_seen ) {
 		$Test->ok( 0, $name );
-		$Test->diag( "Unable to parse POD in $file" );
+
+		if ( $self->verbose ) {
+			$Test->diag( "Extra: " );
+			$Test->diag( " * Unable to parse POD in '$file'" );
+
+			# TODO ugly, but there is no other way to get at it?
+			## no critic ( ProhibitAccessOfPrivateData )
+			foreach my $l ( keys %{ $parser->{errata} } ) {
+				$Test->diag( " * errors seen in line $l:" );
+				$Test->diag( "   * $_" ) for @{ $parser->{errata}{$l} };
+			}
+		}
+
 		return 0;
 	}
 
 	# Did we see POD in the file?
 	if ( $parser->doc_has_started ) {
-		my $links = $parser->links_arrayref;
-		my $own_sections = $parser->sections_hashref;
-		my @errors;
+		my( $err, $diag ) = $self->_analyze( $parser );
 
-		foreach my $l ( @$links ) {
-			my( $type, $to, $section, $linenum, $column ) = @$l;
-			$Test->diag( "$file:$linenum:$column - Checking link '$type/" . ( defined $to ? $to : '' ) . "/" .
-				( defined $section ? $section : '' ) . "'" ) if $ENV{TEST_VERBOSE};
-
-			# What kind of link?
-			if ( $type eq 'man' ) {
-				if ( ! _known_manpage( $to ) ) {
-					push( @errors, "$file:$linenum:$column - Unknown manpage '$to'" );
-				}
-			} elsif ( $type eq 'pod' ) {
-				# do we have a to/section?
-				if ( defined $to ) {
-					if ( defined $section ) {
-						if ( ! _known_podlink( $to, $section ) ) {
-							# TODO Is it on CPAN?
-#							if ( _known_cpan( $to ) ) {
-#								$Test->diag( "$file:$linenum:$column - Skipping pod link '$to/$section' because it is a valid CPAN module" );
-#							} else {
-								push( @errors, "$file:$linenum:$column - Unknown pod link '$to/$section'" );
-#							}
-						}
-					} else {
-						if ( ! _known_podfile( $to ) ) {
-							# Check for internal section
-							if ( exists $own_sections->{ $to } ) {
-								$Test->diag( "$file:$linenum:$column - Internal section link - recommend 'L</$to>'" );
-							} else {
-								# Sometimes we find a manpage but not the pod...
-								if ( _known_manpage( $to ) ) {
-									$Test->diag( "$file:$linenum:$column - Skipping pod link '$to' because it is a valid manpage" );
-								} else {
-									# TODO Is it on CPAN?
-#									if ( _known_cpan( $to ) ) {
-#										$Test->diag( "$file:$linenum:$column - Skipping pod link '$to' because it is a valid CPAN module" );
-#									} else {
-										push( @errors, "$file:$linenum:$column - Unknown pod file '$to'" );
-#									}
-								}
-							}
-						}
-					}
-				} else {
-					if ( defined $section ) {
-						if ( ! exists $own_sections->{ $section } ) {
-							push( @errors, "$file:$linenum:$column - Unknown local pod section '$section'" );
-						}
-					} else {
-						# no to/section eh?
-						die "Invalid link: $l";
-					}
-				}
-			} else {
-				die "Unknown type: $type";
-			}
-		}
-
-		if ( scalar @errors > 0 ) {
+		if ( scalar @$err > 0 ) {
 			$Test->ok( 0, $name );
-			foreach my $e ( @errors ) {
-				$Test->diag( " * $e" );
+			$Test->diag( "Erroneous links: " );
+			$Test->diag( " * $_" ) for @$err;
+
+			if ( $self->verbose and @$diag ) {
+				$Test->diag( "Extra: " );
+				$Test->diag( " * $_" ) for @$diag;
 			}
+
 			return 0;
 		} else {
 			$Test->ok( 1, $name );
+
+			if ( $self->verbose and @$diag ) {
+				$Test->diag( "Extra: " );
+				$Test->diag( " * $_" ) for @$diag;
+			}
 		}
 	} else {
 		$Test->ok( 1, $name );
+
+		if ( $self->verbose ) {
+			$Test->diag( "Extra: " );
+			$Test->diag( " * There is no POD in '$file' ?" );
+		}
 	}
 
 	return 1;
 }
 
-sub all_pod_files_ok {
+=method all_pod_ok
+
+Accepts an optional array of files to check. By default it uses all POD files in your distribution.
+
+This method is what you will usually run. Every file is passed to the L</pod_ok> function. This also sets the
+test plan to be the number of files.
+
+=cut
+
+sub all_pod_ok {
+	my $self = shift;
 	my @files = @_ ? @_ : Test::Pod::all_pod_files();
+
+	if ( ! defined $self or ! ref $self ) {	# Allow function call
+		unshift( @files, $self ) if defined $self;
+		$self = __PACKAGE__->new;
+	}
 
 	$Test->plan( tests => scalar @files );
 
 	my $ok = 1;
 	foreach my $file ( @files ) {
-		pod_file_ok( $file ) or undef $ok;
+		$self->pod_ok( $file ) or undef $ok;
 	}
 
 	return $ok;
 }
 
-# Cache for manpages
-my %CACHE_MAN;
+sub _analyze {
+	my( $self, $parser ) = @_;
+
+	my $file = $parser->source_filename;
+	my $links = $parser->links_arrayref;
+	my $own_sections = $parser->sections_hashref;
+	my( @errors, @diag );
+
+	foreach my $l ( @$links ) {
+		## no critic ( ProhibitAccessOfPrivateData )
+		my( $type, $to, $section, $linenum, $column ) = @$l;
+		push( @diag, "$file:$linenum:$column - Checking link '$type/" . ( defined $to ? $to : '' ) . "/" .
+			( defined $section ? $section : '' ) . "'" ) if $ENV{TEST_VERBOSE};
+
+		# What kind of link?
+		if ( $type eq 'man' ) {
+			if ( ! $self->_known_manpage( $to ) ) {
+				push( @errors, "$file:$linenum:$column - Unknown manpage '$to'" );
+			}
+		} elsif ( $type eq 'pod' ) {
+			# do we have a to/section?
+			if ( defined $to ) {
+				if ( defined $section ) {
+					if ( ! $self->_known_podlink( $to, $section ) ) {
+						if ( $self->_known_cpan( $to ) ) {
+							# if true, treat cpan sections as errors because we can't verify if section exists
+							if ( $self->cpan_section_err ) {
+								push( @errors, "$file:$linenum:$column - Unable to verify pod link '$to/$section' because the CPAN module is not installed" );
+							} else {
+								push( @diag, "$file:$linenum:$column - Skipping pod link '$to/$section' because it is a valid CPAN module" );
+							}
+						} else {
+							push( @errors, "$file:$linenum:$column - Unknown pod link '$to/$section'" );
+						}
+					}
+				} else {
+					if ( ! $self->_known_podfile( $to ) ) {
+						# Check for internal section
+						if ( exists $own_sections->{ $to } ) {
+							push( @diag, "$file:$linenum:$column - Internal section link - recommend 'L</$to>'" );
+						} else {
+							# Sometimes we find a manpage but not the pod...
+							if ( $self->_known_manpage( $to ) ) {
+								push( @diag, "$file:$linenum:$column - Skipping pod link '$to' because it is a valid manpage" );
+							} else {
+								if ( $self->_known_cpan( $to ) ) {
+									push( @diag, "$file:$linenum:$column - Skipping pod link '$to' because it is a valid CPAN module" );
+								} else {
+									push( @errors, "$file:$linenum:$column - Unknown pod file '$to'" );
+								}
+							}
+						}
+					}
+				}
+			} else {
+				if ( defined $section ) {
+					if ( ! exists $own_sections->{ $section } ) {
+						push( @errors, "$file:$linenum:$column - Unknown local pod section '$section'" );
+					}
+				} else {
+					# no to/section eh?
+					die "Invalid link: $l";
+				}
+			}
+		} else {
+			die "Unknown type: $type";
+		}
+	}
+
+	return( \@errors, \@diag );
+}
 
 sub _known_manpage {
-	my $page = shift;
+	## no critic ( ProhibitAccessOfPrivateData )
+	my( $self, $page ) = @_;
+	my $cache = $self->cache->{man};
 
-	if ( ! exists $CACHE_MAN{ $page } ) {
+	if ( ! exists $cache->{ $page } ) {
 		my @manargs;
 		if ( $page =~ /(.+)\s*\((.+)\)$/ ) {
 			@manargs = ($2, $1);
@@ -145,110 +278,115 @@ sub _known_manpage {
 			@manargs = ($page);
 		}
 
-		# TODO doesn't work...
-#		require Capture::Tiny;
-#		Capture::Tiny->import( qw( capture_merged ) );
-		$CACHE_MAN{ $page } = capture_merged {
+		require Capture::Tiny;
+		$cache->{ $page } = Capture::Tiny::capture_merged( sub {
 			system( 'man', @manargs );
-		};
+		} );
 
 		# We need at least 5 newlines to guarantee a real manpage
-		if ( ( $CACHE_MAN{ $page } =~ tr/\n// ) > 5 ) {
-			$CACHE_MAN{ $page } = 1;
+		if ( ( $cache->{ $page } =~ tr/\n// ) > 5 ) {
+			$cache->{ $page } = 1;
 		} else {
-			$CACHE_MAN{ $page } = 0;
+			$cache->{ $page } = 0;
 		}
 	}
 
-	return $CACHE_MAN{ $page };
+	return $cache->{ $page };
 }
 
-# Cache for podfiles
-my %CACHE_POD;
-
 sub _known_podfile {
-	my $file = shift;
+	## no critic ( ProhibitAccessOfPrivateData )
+	my( $self, $link ) = @_;
+	my $cache = $self->cache->{pod};
 
-	if ( ! exists $CACHE_POD{ $file } ) {
+	if ( ! exists $cache->{ $link } ) {
 		# Is it a plain POD file?
 		require Pod::Find;
 		my $filename = Pod::Find::pod_where( {
 			'-inc'	=> 1,
-		}, $file );
+		}, $link );
 		if ( defined $filename ) {
-			$CACHE_POD{ $file } = $filename;
+			$cache->{ $link } = $filename;
 		} else {
 			# It might be a script...
 			require File::Spec;
 			require Config;
 			foreach my $dir ( split /\Q$Config::Config{'path_sep'}/o, $ENV{PATH} ) {
-				my $filename = File::Spec->catfile( $dir, $file );
+				my $filename = File::Spec->catfile( $dir, $link );
 				if ( -e $filename ) {
-					$CACHE_POD{ $file } = $filename;
+					$cache->{ $link } = $filename;
 					last;
 				}
 			}
-			if ( ! exists $CACHE_POD{ $file } ) {
-				$CACHE_POD{ $file } = 0;
+			if ( ! exists $cache->{ $link } ) {
+				$cache->{ $link } = 0;
 			}
 		}
 	}
 
-	return $CACHE_POD{ $file };
+	return $cache->{ $link };
 }
 
-## Cache for cpan modules
-#my %CACHE_CPAN;
-#
-#sub _known_cpan {
-#	my $module = shift;
-#
-#	if ( ! exists $CACHE_CPAN{ $module } ) {
-#		# init the backend ( and set some options )
-#		require CPANPLUS::Configure;
-#		require CPANPLUS::Backend;
-#		my $cpanconfig = CPANPLUS::Configure->new;
-#		$cpanconfig->set_conf( 'verbose' => 0 );
-#		$cpanconfig->set_conf( 'no_update' => 1 );
-#
-#		# ARGH, CPANIDX doesn't work well with this kind of search...
-#		if ( $cpanconfig->get_conf( 'source_engine' ) =~ /CPANIDX/ ) {
-#			$cpanconfig->set_conf( 'source_engine' => 'CPANPLUS::Internals::Source::Memory' );
-#		}
-#
-#		my $cpanplus = CPANPLUS::Backend->new( $cpanconfig );
-#
-#		# silence CPANPLUS!
-#		{
-#			no warnings 'redefine';
-#			sub Log::Message::Handlers::cp_msg { return };
-#			sub Log::Message::Handlers::cp_error { return };
-#		}
-#
-#		# Don't let CPANPLUS warnings ruin our day...
-#		local $SIG{'__WARN__'} = sub { return };
-#		my $module = undef;
-#		eval { $module = $cpanplus->parse_module( 'module' => $module ) };
-#		if ( ! $@ or defined $module ) {
-#			$CACHE_CPAN{ $module } = 1;
-#		} else {
-#			$CACHE_CPAN{ $module } = 0;
-#		}
-#	}
-#
-#	return $CACHE_CPAN{ $module };
-#}
+sub _known_cpan {
+	## no critic ( ProhibitAccessOfPrivateData )
+	my( $self, $module ) = @_;
+	my $cache = $self->cache->{cpan};
 
-sub _known_podlink {
-	my( $file, $section ) = @_;
-
-	# First of all, does the file exists?
-	if ( ! _known_podfile( $file ) ) {
+	# Do we even check CPAN?
+	if ( ! $self->check_cpan ) {
 		return 0;
 	}
 
+	if ( ! exists $cache->{ $module } ) {
+		# init the backend ( and set some options )
+		if ( ! exists $cache->{'.'} ) {
+			if ( ! defined $init_cpan ) {
+				# TODO how to specify version so dzil can pick it up as right prereq?
+				require CPANPLUS::Backend;
+				require CPANPLUS::Configure;
+
+				my $cpanconfig = CPANPLUS::Configure->new;
+				$cpanconfig->set_conf( 'verbose' => 0 );
+				$cpanconfig->set_conf( 'no_update' => 1 );
+
+				# ARGH, CPANIDX doesn't work well with this kind of search...
+				# TODO check if it's still true?
+				if ( $cpanconfig->get_conf( 'source_engine' ) =~ /CPANIDX/ ) {
+					$cpanconfig->set_conf( 'source_engine' => 'CPANPLUS::Internals::Source::Memory' );
+				}
+
+				$cache->{'.'} = $init_cpan = CPANPLUS::Backend->new( $cpanconfig );
+
+				# silence CPANPLUS!
+				eval "no warnings; sub Log::Message::store { return }";
+			} else {
+				$cache->{'.'} = $init_cpan;
+			}
+		}
+		my $cpanplus = $cache->{'.'};
+
+		my $result = undef;
+		eval { local $SIG{'__WARN__'} = sub { return }; $result = $cpanplus->parse_module( 'module' => $module ) };
+		if ( ! $@ and defined $result ) {
+			$cache->{ $module } = 1;
+		} else {
+			$cache->{ $module } = 0;
+		}
+	}
+
+	return $cache->{ $module };
+}
+
+sub _known_podlink {
+	## no critic ( ProhibitAccessOfPrivateData )
+	my( $self, $link, $section ) = @_;
+
+	# First of all, does the file exists?
+	my $filename = $self->_known_podfile( $link );
+	return 0 if ! defined $filename;
+
 	# Okay, get the sections in the file and see if the link matches
-	my $file_sections = _known_podsections( $CACHE_POD{ $file } );
+	my $file_sections = $self->_known_podsections( $filename );
 	if ( defined $file_sections and exists $file_sections->{ $section } ) {
 		return 1;
 	} else {
@@ -256,25 +394,26 @@ sub _known_podlink {
 	}
 }
 
-# Cache for POD sections
-my %CACHE_SECTIONS;
-
 sub _known_podsections {
-	my( $filename ) = @_;
+	## no critic ( ProhibitAccessOfPrivateData )
+	my( $self, $filename ) = @_;
+	my $cache = $self->cache->{sections};
 
-	if ( ! exists $CACHE_SECTIONS{ $filename } ) {
+	if ( ! exists $cache->{ $filename } ) {
 		# Okay, get the sections in the file
 		my $parser = App::PodLinkCheck::ParseSections->new( {} );
 		$parser->parse_file( $filename );
-		$CACHE_SECTIONS{ $filename } = $parser->sections_hashref;
+		$cache->{ $filename } = $parser->sections_hashref;
 	}
 
-	return $CACHE_SECTIONS{ $filename };
+	return $cache->{ $filename };
 }
 
 1;
 
 =pod
+
+=for stopwords CPAN foo OO backend env
 
 =head1 SYNOPSIS
 
@@ -287,7 +426,7 @@ sub _known_podsections {
 	if ( $@ ) {
 		plan skip_all => 'Test::Pod::LinkCheck required for testing POD';
 	} else {
-		all_pod_files_ok();
+		Test::Pod::LinkCheck->new->all_pod_ok;
 	}
 
 =head1 DESCRIPTION
@@ -302,23 +441,12 @@ Normally, you wouldn't want this test to be run during end-user installation bec
 HIGHLY recommended that this be used only for module authors' RELEASE_TESTING phase. To do that, just modify the synopsis to
 add an env check :)
 
-=func pod_file_ok
+This module normally uses the OO method to run tests, but you can use the functional style too. Just explicitly ask for the C<all_pod_ok> or
+C<pod_ok> function to be imported when you use this module.
 
-C<pod_file_ok()> will okay the test if there is no POD links present in the POD or if all links are not an error. Furthermore, if the POD was
-malformed as reported by L<Pod::Simple>, the test will fail and not attempt to check the links.
-
-When it fails, C<pod_file_ok()> will show any failing links as diagnostics.
-
-The optional second argument TESTNAME is the name of the test.  If it is omitted, C<pod_file_ok()> chooses a default
-test name "LinkCheck test for FILENAME".
-
-=func all_pod_files_ok
-
-This function is what you will usually run. It automatically finds any POD in your distribution and runs checks on them.
-
-Accepts an optional argument: an array of files to check. By default it checks all POD files it can find in the distribution. Every file it finds
-is passed to the C<pod_file_ok> function.
-
-This function also sets the test plan to be the number of files found.
+	#!/usr/bin/perl
+	use strict; use warnings;
+	use Test::Pod::LinkCheck qw( all_pod_ok );
+	all_pod_ok();
 
 =cut
