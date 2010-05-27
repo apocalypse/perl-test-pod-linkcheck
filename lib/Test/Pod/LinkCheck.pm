@@ -12,9 +12,6 @@ use App::PodLinkCheck::ParseSections 4;
 use Test::Builder 0.94;
 my $Test = Test::Builder->new;
 
-# we init CPANPLUS only once per program!
-my $init_cpan = undef;
-
 # export our 2 subs
 use base qw( Exporter );
 our @EXPORT_OK = qw( pod_ok all_pod_ok );
@@ -25,6 +22,12 @@ If disabled, this module will not check the CPAN module database to see if a lin
 this module only supports L<CPANPLUS> as the backend, others may be added.
 
 The default is: true
+
+=attr cpan_backend
+
+Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPANSQLite, and CPAN.
+
+The default is: CPANPLUS
 
 =attr cpan_section_err
 
@@ -47,6 +50,24 @@ has 'check_cpan' => (
 	default	=> 1,
 );
 
+{
+	use Moose::Util::TypeConstraints 1.01;
+
+	has 'cpan_backend' => (
+		is	=> 'rw',
+		isa	=> enum( [ qw( CPANPLUS CPANSQLite CPAN ) ] ),
+		default	=> 'CPANPLUS',
+		trigger => \&_clean_backend,
+	);
+
+	sub _clean_backend {
+		my( $self, $new, $old ) = @_;
+
+		# Just clear the cpan backend
+		delete $self->cache->{'cpan'} if exists $self->cache->{'cpan'};
+	}
+}
+
 has 'cpan_section_err' => (
 	is	=> 'rw',
 	isa	=> 'Bool',
@@ -64,6 +85,12 @@ has 'cache' => (
 	isa	=> 'HashRef',
 	default	=> sub { {} },
 );
+
+sub DEMOLISH {
+	my $self = shift;
+
+	warn "DEMOLISH \$self";
+}
 
 =method pod_ok
 
@@ -217,15 +244,20 @@ sub _analyze {
 			if ( defined $to ) {
 				if ( defined $section ) {
 					if ( ! $self->_known_podlink( $to, $section ) ) {
-						if ( $self->_known_cpan( $to ) ) {
-							# if true, treat cpan sections as errors because we can't verify if section exists
-							if ( $self->cpan_section_err ) {
-								push( @errors, "$file:$linenum:$column - Unable to verify pod link '$to/$section' because the CPAN module is not installed" );
+						my $res = $self->_known_cpan( $to );
+						if ( defined $res ) {
+							if ( $res ) {
+								# if true, treat cpan sections as errors because we can't verify if section exists
+								if ( $self->cpan_section_err ) {
+									push( @errors, "$file:$linenum:$column - Unable to verify pod link '$to/$section' because the CPAN module is not installed" );
+								} else {
+									push( @diag, "$file:$linenum:$column - Skipping pod link '$to/$section' because it is a valid CPAN module" );
+								}
 							} else {
-								push( @diag, "$file:$linenum:$column - Skipping pod link '$to/$section' because it is a valid CPAN module" );
+								push( @errors, "$file:$linenum:$column - Unknown pod link '$to/$section' - module doesn't exist in CPAN" );
 							}
 						} else {
-							push( @errors, "$file:$linenum:$column - Unknown pod link '$to/$section'" );
+							push( @errors, "$file:$linenum:$column - Unknown pod link '$to/$section' - unable to check CPAN" );
 						}
 					}
 				} else {
@@ -238,10 +270,15 @@ sub _analyze {
 							if ( $self->_known_manpage( $to ) ) {
 								push( @diag, "$file:$linenum:$column - Skipping pod link '$to' because it is a valid manpage" );
 							} else {
-								if ( $self->_known_cpan( $to ) ) {
-									push( @diag, "$file:$linenum:$column - Skipping pod link '$to' because it is a valid CPAN module" );
+								my $res = $self->_known_cpan( $to );
+								if ( defined $res ) {
+									if ( $res ) {
+										push( @diag, "$file:$linenum:$column - Skipping pod link '$to' because it is a valid CPAN module" );
+									} else {
+										push( @errors, "$file:$linenum:$column - Unknown pod file '$to' - module doesn't exist in CPAN" );
+									}
 								} else {
-									push( @errors, "$file:$linenum:$column - Unknown pod file '$to'" );
+									push( @errors, "$file:$linenum:$column - Unknown pod link '$to' - unable to check CPAN" );
 								}
 							}
 						}
@@ -334,44 +371,165 @@ sub _known_cpan {
 
 	# Do we even check CPAN?
 	if ( ! $self->check_cpan ) {
-		return 0;
+		return undef;
 	}
 
-	if ( ! exists $cache->{ $module } ) {
-		# init the backend ( and set some options )
-		if ( ! exists $cache->{'.'} ) {
-			if ( ! defined $init_cpan ) {
-				# TODO how to specify version so dzil can pick it up as right prereq?
-				require CPANPLUS::Backend;
-				require CPANPLUS::Configure;
+	# is the answer cached already?
+	if ( exists $cache->{ $module } ) {
+		return $cache->{ $module };
+	}
 
-				my $cpanconfig = CPANPLUS::Configure->new;
-				$cpanconfig->set_conf( 'verbose' => 0 );
-				$cpanconfig->set_conf( 'no_update' => 1 );
+	# Select the backend?
+	if ( $self->cpan_backend eq 'CPANPLUS' ) {
+		return $self->_known_cpan_cpanplus( $module );
+	} elsif ( $self->cpan_backend eq 'CPANSQLite' ) {
+		return $self->_known_cpan_cpansqlite( $module );
+	} elsif ( $self->cpan_backend eq 'CPAN' ) {
+		return $self->_known_cpan_cpan( $module );
+	} else {
+		die "Unknown backend: " . $self->cpan_backend;
+	}
+}
 
-				# ARGH, CPANIDX doesn't work well with this kind of search...
-				# TODO check if it's still true?
-				if ( $cpanconfig->get_conf( 'source_engine' ) =~ /CPANIDX/ ) {
-					$cpanconfig->set_conf( 'source_engine' => 'CPANPLUS::Internals::Source::Memory' );
-				}
+sub _known_cpan_cpanplus {
+	my( $self, $module ) = @_;
+	my $cache = $self->cache->{cpan};
+warn "CHECKING CPANPLUS FOR $module";
+use Data::Dumper::Concise;
+warn Dumper( $self->cache );
 
-				$cache->{'.'} = $init_cpan = CPANPLUS::Backend->new( $cpanconfig );
+	# init the backend ( and set some options )
+	if ( ! exists $cache->{'.'} ) {
+		warn "init CPANPLUS";
+		eval {
+			# TODO how to specify version so dzil can pick it up as right prereq?
+			require CPANPLUS::Backend;
+			require CPANPLUS::Configure;
 
-				# silence CPANPLUS!
-				eval "no warnings; sub Log::Message::store { return }";
-			} else {
-				$cache->{'.'} = $init_cpan;
+			my $cpanconfig = CPANPLUS::Configure->new;
+			$cpanconfig->set_conf( 'verbose' => 0 );
+			$cpanconfig->set_conf( 'no_update' => 1 );
+
+			# ARGH, CPANIDX doesn't work well with this kind of search...
+			# TODO check if it's still true?
+			if ( $cpanconfig->get_conf( 'source_engine' ) =~ /CPANIDX/ ) {
+				$cpanconfig->set_conf( 'source_engine' => 'CPANPLUS::Internals::Source::Memory' );
 			}
-		}
-		my $cpanplus = $cache->{'.'};
 
-		my $result = undef;
-		eval { local $SIG{'__WARN__'} = sub { return }; $result = $cpanplus->parse_module( 'module' => $module ) };
-		if ( ! $@ and defined $result ) {
-			$cache->{ $module } = 1;
-		} else {
-			$cache->{ $module } = 0;
+			$cache->{'.'} = CPANPLUS::Backend->new( $cpanconfig );
+
+			# silence CPANPLUS!
+			eval "no warnings 'redefine'; sub Log::Message::store { return }";
+			die $@ if $@;
+		};
+		if ( $@ ) {
+			warn "Unable to load CPANPLUS - switching to CPANSQLite ( $@ )" if $self->verbose;
+			$self->cpan_backend( 'CPANSQLite' );
+			return $self->_known_cpan( $module );
 		}
+	}
+
+	my $result = undef;
+	eval { local $SIG{'__WARN__'} = sub { return }; $result = $cache->{'.'}->parse_module( 'module' => $module ) };
+	if ( ! $@ and defined $result ) {
+		$cache->{ $module } = 1;
+	} else {
+		$cache->{ $module } = 0;
+	}
+
+	return $cache->{ $module };
+}
+
+sub _known_cpan_cpansqlite {
+	my( $self, $module ) = @_;
+	my $cache = $self->cache->{cpan};
+
+	# init the backend ( and set some options )
+	if ( ! exists $cache->{'.'} ) {
+		eval {
+			# TODO how to specify version so dzil can pick it up as right prereq?
+			require CPAN;
+			require CPAN::SQLite;
+
+			# TODO this code stolen from App::PodLinkCheck
+			# not sure how far back this will work, maybe only 5.8.0 up
+			if ( ! $CPAN::Config_loaded && CPAN::HandleConfig->can( 'load' ) ) {
+				# fake $loading to avoid running the CPAN::FirstTime dialog -- is this the right way to do that?
+				local $CPAN::HandleConfig::loading = 1;
+				CPAN::HandleConfig->load;
+			}
+
+			$cache->{'.'} = CPAN::SQLite->new;
+		};
+		if ( $@ ) {
+			warn "Unable to load CPANSQLite - switching to CPAN ( $@ )" if $self->verbose;
+			$self->cpan_backend( 'CPAN' );
+			return $self->_known_cpan( $module );
+		}
+	}
+
+	my $result = undef;
+	eval { local $SIG{'__WARN__'} = sub { return }; $result = $cache->{'.'}->query( 'mode' => 'module', name => $module, max_results => 1 ) };
+	if ( ! $@ and defined $result ) {
+		$cache->{ $module } = 1;
+	} else {
+		$cache->{ $module } = 0;
+	}
+
+	return $cache->{ $module };
+}
+
+sub _known_cpan_cpan {
+	my( $self, $module ) = @_;
+	my $cache = $self->cache->{cpan};
+
+	# init the backend ( and set some options )
+	if ( ! exists $cache->{'.'} ) {
+		eval {
+			# TODO how to specify version so dzil can pick it up as right prereq?
+			require CPAN;
+
+			# TODO this code stolen from App::PodLinkCheck
+			# not sure how far back this will work, maybe only 5.8.0 up
+			if ( ! $CPAN::Config_loaded && CPAN::HandleConfig->can( 'load' ) ) {
+				# fake $loading to avoid running the CPAN::FirstTime dialog -- is this the right way to do that?
+				local $CPAN::HandleConfig::loading = 1;
+				CPAN::HandleConfig->load;
+			}
+
+			# figure out the access method
+			if ( defined $CPAN::META && %$CPAN::META ) {
+	 			# works already!
+			} elsif ( ! CPAN::Index->can('read_metadata_cache') ) {
+				# Argh, we can't use it...
+				die "Unable to use CPAN.pm metadata cache!";
+			} else {
+				# try the .cpan/Metadata even if CPAN::SQLite is installed, just in
+				# case the SQLite is not up-to-date or has not been used yet
+				local $CPAN::Config->{use_sqlite} = $CPAN::Config->{use_sqlite} = 0;	# stupid used once warning...
+				CPAN::Index->read_metadata_cache;
+				if ( defined $CPAN::META && %$CPAN::META ) {
+					# yay, works!
+				} else {
+					die "Unable to use CPAN.pm metadata cache!";
+				}
+			}
+
+			# Cache is ready
+			$cache->{'.'} = $CPAN::META->{'readwrite'}->{'CPAN::Module'};
+		};
+		if ( $@ ) {
+			warn "Unable to load CPAN - disabling CPAN searches! ( $@ )" if $self->verbose;
+			$self->check_cpan( 0 );
+			delete $cache->{'.'} if exists $cache->{'.'};
+			return undef;
+		}
+	}
+
+	if ( exists $cache->{'.'}{ $module } ) {
+		$cache->{ $module } = 1;
+	} else {
+		$cache->{ $module } = 0;
 	}
 
 	return $cache->{ $module };
@@ -432,10 +590,9 @@ sub _known_podsections {
 =head1 DESCRIPTION
 
 This module looks for any links in your POD and verifies that they point to a valid resource. It uses the L<Pod::Simple> parser
-to analyze the pod files and look at their links. Original idea and sample code taken from L<App::PodLinkCheck>, thanks!
-
-In a nutshell, it looks for C<LE<lt>FooE<gt>> links and makes sure that Foo exists. It also recognizes section links, C<LE<lt>/SYNOPSISE<gt>>
-for example. Also, manpages are resolved and checked. If you linked to a CPAN module and it is not installed, it is an error!
+to analyze the pod files and look at their links. In a nutshell, it looks for C<LE<lt>FooE<gt>> links and makes sure that Foo
+exists. It also recognizes section links, C<LE<lt>/SYNOPSISE<gt>> for example. Also, manpages are resolved and checked. If you
+linked to a CPAN module and it is not installed, it is an error!
 
 Normally, you wouldn't want this test to be run during end-user installation because they might not have the modules installed! It is
 HIGHLY recommended that this be used only for module authors' RELEASE_TESTING phase. To do that, just modify the synopsis to

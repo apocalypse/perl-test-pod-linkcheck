@@ -81,7 +81,9 @@ foreach my $t ( keys %tests ) {
 				my( $fh, $filename ) = tempfile( UNLINK => 1 );
 				$fh->autoflush( 1 );
 				print $fh delete $tests{ $t }{ pod };
-				Test::Pod::LinkCheck->new->pod_ok( $filename );
+				my $checker = Test::Pod::LinkCheck->new;
+				$checker->pod_ok( $filename );
+				undef $checker;
 			},
 		);
 	};
