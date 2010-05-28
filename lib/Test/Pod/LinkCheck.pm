@@ -569,7 +569,7 @@ __PACKAGE__->meta->make_immutable;
 
 =pod
 
-=for stopwords CPAN foo OO backend env
+=for stopwords CPAN foo OO backend env CPANPLUS CPANSQLite http
 
 =head1 SYNOPSIS
 
