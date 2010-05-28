@@ -17,8 +17,7 @@ our @EXPORT_OK = qw( pod_ok all_pod_ok );
 
 =attr check_cpan
 
-If disabled, this module will not check the CPAN module database to see if a link is a valid CPAN module or not. As of now
-this module only supports L<CPANPLUS> as the backend, others may be added.
+If disabled, this module will not check the CPAN module database to see if a link is a valid CPAN module or not.
 
 The default is: true
 
