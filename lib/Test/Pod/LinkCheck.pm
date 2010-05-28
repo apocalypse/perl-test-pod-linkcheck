@@ -6,7 +6,6 @@ package Test::Pod::LinkCheck;
 use Moose 1.01;
 use Test::Pod 1.44 ();
 use App::PodLinkCheck::ParseLinks 4;
-use App::PodLinkCheck::ParseSections 4;
 
 # setup our tests and etc
 use Test::Builder 0.94;
@@ -25,7 +24,7 @@ The default is: true
 
 =attr cpan_backend
 
-Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPANSQLite, and CPAN.
+Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPAN, and CPANSQLite.
 
 The default is: CPANPLUS
 
@@ -55,7 +54,7 @@ has 'check_cpan' => (
 
 	has 'cpan_backend' => (
 		is	=> 'rw',
-		isa	=> enum( [ qw( CPANPLUS CPANSQLite CPAN ) ] ),
+		isa	=> enum( [ qw( CPANPLUS CPAN CPANSQLite ) ] ),
 		default	=> 'CPANPLUS',
 		trigger => \&_clean_backend,
 	);
@@ -64,7 +63,7 @@ has 'check_cpan' => (
 		my( $self, $new, $old ) = @_;
 
 		# Just clear the cpan backend
-		delete $self->cache->{'cpan'} if exists $self->cache->{'cpan'};
+		$self->_cache->{'cpan'} = {};
 	}
 }
 
@@ -80,17 +79,16 @@ has 'verbose' => (
 	default	=> 1,
 );
 
-has 'cache' => (
+has '_cache' => (
 	is	=> 'ro',
 	isa	=> 'HashRef',
-	default	=> sub { {} },
+	default	=> sub { return {
+		'cpan'		=> {},
+		'man'		=> {},
+		'pod'		=> {},
+		'section'	=> {},
+	} },
 );
-
-sub DEMOLISH {
-	my $self = shift;
-
-	warn "DEMOLISH \$self";
-}
 
 =method pod_ok
 
@@ -232,7 +230,7 @@ sub _analyze {
 		## no critic ( ProhibitAccessOfPrivateData )
 		my( $type, $to, $section, $linenum, $column ) = @$l;
 		push( @diag, "$file:$linenum:$column - Checking link '$type/" . ( defined $to ? $to : '' ) . "/" .
-			( defined $section ? $section : '' ) . "'" ) if $ENV{TEST_VERBOSE};
+			( defined $section ? $section : '' ) . "'" ) if $ENV{'TEST_VERBOSE'};
 
 		# What kind of link?
 		if ( $type eq 'man' ) {
@@ -305,7 +303,7 @@ sub _analyze {
 sub _known_manpage {
 	## no critic ( ProhibitAccessOfPrivateData )
 	my( $self, $page ) = @_;
-	my $cache = $self->cache->{man};
+	my $cache = $self->_cache->{'man'};
 
 	if ( ! exists $cache->{ $page } ) {
 		my @manargs;
@@ -334,7 +332,7 @@ sub _known_manpage {
 sub _known_podfile {
 	## no critic ( ProhibitAccessOfPrivateData )
 	my( $self, $link ) = @_;
-	my $cache = $self->cache->{pod};
+	my $cache = $self->_cache->{'pod'};
 
 	if ( ! exists $cache->{ $link } ) {
 		# Is it a plain POD file?
@@ -348,7 +346,7 @@ sub _known_podfile {
 			# It might be a script...
 			require File::Spec;
 			require Config;
-			foreach my $dir ( split /\Q$Config::Config{'path_sep'}/o, $ENV{PATH} ) {
+			foreach my $dir ( split /\Q$Config::Config{'path_sep'}/o, $ENV{'PATH'} ) {
 				my $filename = File::Spec->catfile( $dir, $link );
 				if ( -e $filename ) {
 					$cache->{ $link } = $filename;
@@ -367,7 +365,6 @@ sub _known_podfile {
 sub _known_cpan {
 	## no critic ( ProhibitAccessOfPrivateData )
 	my( $self, $module ) = @_;
-	my $cache = $self->cache->{cpan};
 
 	# Do we even check CPAN?
 	if ( ! $self->check_cpan ) {
@@ -375,17 +372,17 @@ sub _known_cpan {
 	}
 
 	# is the answer cached already?
-	if ( exists $cache->{ $module } ) {
-		return $cache->{ $module };
+	if ( exists $self->_cache->{'cpan'}{ $module } ) {
+		return $self->_cache->{'cpan'}{ $module };
 	}
 
 	# Select the backend?
 	if ( $self->cpan_backend eq 'CPANPLUS' ) {
 		return $self->_known_cpan_cpanplus( $module );
-	} elsif ( $self->cpan_backend eq 'CPANSQLite' ) {
-		return $self->_known_cpan_cpansqlite( $module );
 	} elsif ( $self->cpan_backend eq 'CPAN' ) {
 		return $self->_known_cpan_cpan( $module );
+	} elsif ( $self->cpan_backend eq 'CPANSQLite' ) {
+		return $self->_known_cpan_cpansqlite( $module );
 	} else {
 		die "Unknown backend: " . $self->cpan_backend;
 	}
@@ -393,18 +390,13 @@ sub _known_cpan {
 
 sub _known_cpan_cpanplus {
 	my( $self, $module ) = @_;
-	my $cache = $self->cache->{cpan};
-warn "CHECKING CPANPLUS FOR $module";
-use Data::Dumper::Concise;
-warn Dumper( $self->cache );
+	my $cache = $self->_cache->{'cpan'};
 
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
-		warn "init CPANPLUS";
 		eval {
-			# TODO how to specify version so dzil can pick it up as right prereq?
-			require CPANPLUS::Backend;
-			require CPANPLUS::Configure;
+			# Wacky format so dzil will not autoprereq it
+			require 'CPANPLUS/Backend.pm'; require 'CPANPLUS/Configure.pm';
 
 			my $cpanconfig = CPANPLUS::Configure->new;
 			$cpanconfig->set_conf( 'verbose' => 0 );
@@ -416,15 +408,14 @@ warn Dumper( $self->cache );
 				$cpanconfig->set_conf( 'source_engine' => 'CPANPLUS::Internals::Source::Memory' );
 			}
 
-			$cache->{'.'} = CPANPLUS::Backend->new( $cpanconfig );
-
 			# silence CPANPLUS!
 			eval "no warnings 'redefine'; sub Log::Message::store { return }";
-			die $@ if $@;
+			local $SIG{'__WARN__'} = sub { return };
+			$cache->{'.'} = CPANPLUS::Backend->new( $cpanconfig );
 		};
 		if ( $@ ) {
-			warn "Unable to load CPANPLUS - switching to CPANSQLite ( $@ )" if $self->verbose;
-			$self->cpan_backend( 'CPANSQLite' );
+			warn "Unable to load CPANPLUS - switching to CPAN ( $@ )" if $self->verbose;
+			$self->cpan_backend( 'CPAN' );
 			return $self->_known_cpan( $module );
 		}
 	}
@@ -442,14 +433,13 @@ warn Dumper( $self->cache );
 
 sub _known_cpan_cpansqlite {
 	my( $self, $module ) = @_;
-	my $cache = $self->cache->{cpan};
+	my $cache = $self->_cache->{'cpan'};
 
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
-			# TODO how to specify version so dzil can pick it up as right prereq?
-			require CPAN;
-			require CPAN::SQLite;
+			# Wacky format so dzil will not autoprereq it
+			require 'CPAN.pm'; require 'CPAN/SQLite.pm';
 
 			# TODO this code stolen from App::PodLinkCheck
 			# not sure how far back this will work, maybe only 5.8.0 up
@@ -462,9 +452,10 @@ sub _known_cpan_cpansqlite {
 			$cache->{'.'} = CPAN::SQLite->new;
 		};
 		if ( $@ ) {
-			warn "Unable to load CPANSQLite - switching to CPAN ( $@ )" if $self->verbose;
-			$self->cpan_backend( 'CPAN' );
-			return $self->_known_cpan( $module );
+			$self->check_cpan( 0 );
+			delete $cache->{'.'} if exists $cache->{'.'};
+			warn "Unable to load CPANSQLite - disabling CPAN searches! ( $@ )" if $self->verbose;
+			return undef;
 		}
 	}
 
@@ -481,13 +472,13 @@ sub _known_cpan_cpansqlite {
 
 sub _known_cpan_cpan {
 	my( $self, $module ) = @_;
-	my $cache = $self->cache->{cpan};
+	my $cache = $self->_cache->{'cpan'};
 
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
-			# TODO how to specify version so dzil can pick it up as right prereq?
-			require CPAN;
+			# Wacky format so dzil will not autoprereq it
+			require 'CPAN.pm';
 
 			# TODO this code stolen from App::PodLinkCheck
 			# not sure how far back this will work, maybe only 5.8.0 up
@@ -519,10 +510,9 @@ sub _known_cpan_cpan {
 			$cache->{'.'} = $CPAN::META->{'readwrite'}->{'CPAN::Module'};
 		};
 		if ( $@ ) {
-			warn "Unable to load CPAN - disabling CPAN searches! ( $@ )" if $self->verbose;
-			$self->check_cpan( 0 );
-			delete $cache->{'.'} if exists $cache->{'.'};
-			return undef;
+			warn "Unable to load CPAN - switching to CPANSQLite ( $@ )" if $self->verbose;
+			$self->cpan_backend( 'CPANSQLite' );
+			return $self->_known_cpan( $module );
 		}
 	}
 
@@ -555,10 +545,11 @@ sub _known_podlink {
 sub _known_podsections {
 	## no critic ( ProhibitAccessOfPrivateData )
 	my( $self, $filename ) = @_;
-	my $cache = $self->cache->{sections};
+	my $cache = $self->_cache->{'sections'};
 
 	if ( ! exists $cache->{ $filename } ) {
 		# Okay, get the sections in the file
+		require App::PodLinkCheck::ParseSections;
 		my $parser = App::PodLinkCheck::ParseSections->new( {} );
 		$parser->parse_file( $filename );
 		$cache->{ $filename } = $parser->sections_hashref;
@@ -566,6 +557,10 @@ sub _known_podsections {
 
 	return $cache->{ $filename };
 }
+
+# from Moose::Manual::BestPractices
+no Moose;
+__PACKAGE__->meta->make_immutable;
 
 1;
 
