@@ -241,15 +241,15 @@ sub _analyze {
 			# do we have a to/section?
 			if ( defined $to ) {
 				if ( defined $section ) {
+					# Do we have this file installed?
 					if ( ! $self->_known_podlink( $to, $section ) ) {
+						# Is it a CPAN module?
 						my $res = $self->_known_cpan( $to );
 						if ( defined $res ) {
 							if ( $res ) {
 								# if true, treat cpan sections as errors because we can't verify if section exists
 								if ( $self->cpan_section_err ) {
 									push( @errors, "$file:$linenum:$column - Unable to verify pod link '$to/$section' because the CPAN module is not installed" );
-								} else {
-									push( @diag, "$file:$linenum:$column - Skipping pod link '$to/$section' because it is a valid CPAN module" );
 								}
 							} else {
 								push( @errors, "$file:$linenum:$column - Unknown pod link '$to/$section' - module doesn't exist in CPAN" );
@@ -259,22 +259,25 @@ sub _analyze {
 						}
 					}
 				} else {
+					# Do we have this file installed?
 					if ( ! $self->_known_podfile( $to ) ) {
-						# Check for internal section
-						if ( exists $own_sections->{ $to } ) {
-							push( @diag, "$file:$linenum:$column - Internal section link - recommend 'L</$to>'" );
-						} else {
-							# Sometimes we find a manpage but not the pod...
-							if ( $self->_known_manpage( $to ) ) {
-								push( @diag, "$file:$linenum:$column - Skipping pod link '$to' because it is a valid manpage" );
-							} else {
-								my $res = $self->_known_cpan( $to );
-								if ( defined $res ) {
-									if ( $res ) {
-										push( @diag, "$file:$linenum:$column - Skipping pod link '$to' because it is a valid CPAN module" );
+						# Sometimes we find a manpage but not the pod...
+						if ( ! $self->_known_manpage( $to ) ) {
+							# Is it a CPAN module?
+							my $res = $self->_known_cpan( $to );
+							if ( defined $res ) {
+								if ( ! $res ) {
+									# Check for internal section
+									if ( exists $own_sections->{ $to } ) {
+										push( @diag, "$file:$linenum:$column - Internal section link - recommend 'L</$to>'" );
 									} else {
 										push( @errors, "$file:$linenum:$column - Unknown pod file '$to' - module doesn't exist in CPAN" );
 									}
+								}
+							} else {
+								# Check for internal section
+								if ( exists $own_sections->{ $to } ) {
+									push( @diag, "$file:$linenum:$column - Internal section link - recommend 'L</$to>'" );
 								} else {
 									push( @errors, "$file:$linenum:$column - Unknown pod link '$to' - unable to check CPAN" );
 								}
@@ -589,6 +592,9 @@ to analyze the pod files and look at their links. In a nutshell, it looks for C<
 exists. It also recognizes section links, C<LE<lt>/SYNOPSISE<gt>> for example. Also, manpages are resolved and checked. If you
 linked to a CPAN module and it is not installed, it is an error!
 
+This module does B<NOT> check "http" links like C<LE<lt>http://www.google.comE<gt>> in your pod. For that, please check
+out L<Test::Pod::No404s>.
+
 Normally, you wouldn't want this test to be run during end-user installation because they might not have the modules installed! It is
 HIGHLY recommended that this be used only for module authors' RELEASE_TESTING phase. To do that, just modify the synopsis to
 add an env check :)
@@ -600,5 +606,10 @@ C<pod_ok> function to be imported when you use this module.
 	use strict; use warnings;
 	use Test::Pod::LinkCheck qw( all_pod_ok );
 	all_pod_ok();
+
+=head1 SEE ALSO
+L<App::PodLinkCheck>
+L<Pod::Checker>
+L<Test::Pod::No404s>
 
 =cut
