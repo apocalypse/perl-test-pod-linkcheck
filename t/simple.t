@@ -41,6 +41,14 @@ my %tests = (
 		pod		=> "=head1 NAME\n\nHello from L<\"Foobar\">!",
 		actual_ok	=> 0,
 	},
+	'invalid_sec_text'=> {
+		pod		=> "=head1 NAME\n\nHello from L<foo|\"Foobar\">!",
+		actual_ok	=> 0,
+	},
+	'invalid_sec2_text'=> {
+		pod		=> "=head1 NAME\n\nHello from L<foo|/Foobar>!",
+		actual_ok	=> 0,
+	},
 	'pass_sec'	=> {
 		pod		=> "=head1 NAME\n\nHello from L</Zonkers>!\n\n=head1 Zonkers\n\nThis is the Foobar!",
 		actual_ok	=> 1,
@@ -57,13 +65,25 @@ my %tests = (
 		pod		=> "=head1 NAME\n\nHello from us!\n\n=head1 Zonkers\n\nThis is the Foobar!\n\n=head1 Welcome\n\nL<\"Zonkers\">",
 		actual_ok	=> 1,
 	},
+	'pass_sec_text'	=> {
+		pod		=> "=head1 NAME\n\nHello from L<zonk|\"Zonkers\">!\n\n=head1 Zonkers\n\nThis is the Foobar!",
+		actual_ok	=> 1,
+	},
+	'pass_sec2_text'	=> {
+		pod		=> "=head1 NAME\n\nHello from us!\n\n=head1 Zonkers\n\nThis is the Foobar!\n\n=head1 Welcome\n\nL<zonk|\"Zonkers\">",
+		actual_ok	=> 1,
+	},
+	'pass_sec3_text'	=> {
+		pod		=> "=head1 NAME\n\nHello from us!\n\n=head1 Zonkers\n\nThis is the Foobar!\n\n=head1 Welcome\n\nL<zonk|/Zonkers>",
+		actual_ok	=> 1,
+	},
 	'pass_man'	=> {
 		pod		=> "=head1 NAME\n\nHello from L<man(1)>!",
 		actual_ok	=> 1,
 		todo		=> "man is not installed everywhere, thanks CPANTesters!",
 	},
 	'invalid_man'	=> {
-		pod		=> "=head1 NAME\n\nHello from L<famboozled(9)>!",
+		pod		=> "=head1 NAME\n\nHello from L<famboozled_not_exists(9)>!",
 		actual_ok	=> 0,
 		todo		=> "man is not installed everywhere, thanks CPANTesters!",
 	},
