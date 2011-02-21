@@ -17,26 +17,8 @@ our @EXPORT_OK = qw( pod_ok all_pod_ok );
 
 =attr check_cpan
 
-If disabled, this module will not check the CPAN module database to see if a link is a valid CPAN module or not.
-
-The default is: true
-
-=attr cpan_backend
-
-Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPAN, and CPANSQLite.
-
-The default is: CPANPLUS
-
-=attr cpan_section_err
-
-If enabled, a link pointing to a CPAN module's specific section is treated as an error. Since the module isn't installed we
-are unable to verify the section actually exists.
-
-The default is: false
-
-=attr verbose
-
-If enabled, this module will print extra diagnostics for the links it's checking.
+If disabled, this module will not check the CPAN module database to see if a link is a valid CPAN module or not. This means
+it will resolve links based on locally installed modules. If it isn't installed it will be an error!
 
 The default is: true
 
@@ -50,6 +32,14 @@ has 'check_cpan' => (
 
 {
 	use Moose::Util::TypeConstraints 1.01;
+
+=attr cpan_backend
+
+Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPAN, and CPANSQLite.
+
+The default is: CPANPLUS
+
+=cut
 
 	has 'cpan_backend' => (
 		is	=> 'rw',
@@ -66,16 +56,32 @@ has 'check_cpan' => (
 	}
 }
 
+=attr cpan_section_err
+
+If enabled, a link pointing to a CPAN module's specific section is treated as an error if it isn't installed.
+
+The default is: false
+
+=cut
+
 has 'cpan_section_err' => (
 	is	=> 'rw',
 	isa	=> 'Bool',
-	default	=> 0,
+	default	=> 1,
 );
+
+=attr verbose
+
+If enabled, this module will print extra diagnostics for the links it's checking.
+
+The default is: true
+
+=cut
 
 has 'verbose' => (
 	is	=> 'rw',
 	isa	=> 'Bool',
-	default	=> 1,
+	default	=> 0,
 );
 
 has '_cache' => (
@@ -145,9 +151,9 @@ sub pod_ok {
 
 			# TODO ugly, but there is no other way to get at it?
 			## no critic ( ProhibitAccessOfPrivateData )
-			foreach my $l ( keys %{ $parser->{errata} } ) {
+			foreach my $l ( keys %{ $parser->{'errata'} } ) {
 				$Test->diag( " * errors seen in line $l:" );
-				$Test->diag( "   * $_" ) for @{ $parser->{errata}{$l} };
+				$Test->diag( "   * $_" ) for @{ $parser->{'errata'}{$l} };
 			}
 		}
 
@@ -228,13 +234,13 @@ sub _analyze {
 	foreach my $l ( @$links ) {
 		## no critic ( ProhibitAccessOfPrivateData )
 		my( $type, $to, $section, $linenum, $column ) = @$l;
-		push( @diag, "$file:$linenum:$column - Checking link '$type/" . ( defined $to ? $to : '' ) . "/" .
-			( defined $section ? $section : '' ) . "'" ) if $ENV{'TEST_VERBOSE'};
+#		push( @diag, "$file:$linenum:$column - Checking link type($type) to(" . ( defined $to ? $to : '' ) . ") " .
+#			"section(" . ( defined $section ? $section : '' ) . ")" );
 
 		# What kind of link?
 		if ( $type eq 'man' ) {
 			if ( ! $self->_known_manpage( $to ) ) {
-				push( @errors, "$file:$linenum:$column - Unknown manpage '$to'" );
+				push( @errors, "$file:$linenum:$column - Unknown link type(man) to($to)" );
 			}
 		} elsif ( $type eq 'pod' ) {
 			# do we have a to/section?
@@ -248,13 +254,15 @@ sub _analyze {
 							if ( $res ) {
 								# if true, treat cpan sections as errors because we can't verify if section exists
 								if ( $self->cpan_section_err ) {
-									push( @errors, "$file:$linenum:$column - Unable to verify pod link '$to/$section' because the CPAN module is not installed" );
+									push( @errors, "$file:$linenum:$column - Unable to verify link type(pod) to($to) section($section) because the module isn't installed" );
+								} else {
+									push( @diag, "$file:$linenum:$column - Unable to verify link type(pod) to($to) section($section) because the module isn't installed" );
 								}
 							} else {
-								push( @errors, "$file:$linenum:$column - Unknown pod link '$to/$section' - module doesn't exist in CPAN" );
+								push( @errors, "$file:$linenum:$column - Unknown link type(pod) to($to) section($section) - module doesn't exist in CPAN" );
 							}
 						} else {
-							push( @errors, "$file:$linenum:$column - Unknown pod link '$to/$section' - unable to check CPAN" );
+							push( @errors, "$file:$linenum:$column - Unknown link type(pod) to($to) section($section) - unable to check CPAN" );
 						}
 					}
 				} else {
@@ -268,17 +276,17 @@ sub _analyze {
 								if ( ! $res ) {
 									# Check for internal section
 									if ( exists $own_sections->{ $to } ) {
-										push( @diag, "$file:$linenum:$column - Internal section link - recommend 'L</$to>'" );
+										push( @diag, "$file:$linenum:$column - Link type(pod) to($to) looks like an internal section link - recommend 'L</$to>'" );
 									} else {
-										push( @errors, "$file:$linenum:$column - Unknown pod file '$to' - module doesn't exist in CPAN" );
+										push( @errors, "$file:$linenum:$column - Unknown link type(pod) to($to) - module doesn't exist in CPAN" );
 									}
 								}
 							} else {
 								# Check for internal section
 								if ( exists $own_sections->{ $to } ) {
-									push( @diag, "$file:$linenum:$column - Internal section link - recommend 'L</$to>'" );
+									push( @diag, "$file:$linenum:$column - Link type(pod) to($to) looks like an internal section link - recommend 'L</$to>'" );
 								} else {
-									push( @errors, "$file:$linenum:$column - Unknown pod link '$to' - unable to check CPAN" );
+									push( @errors, "$file:$linenum:$column - Unknown link type(pod) to($to) - unable to check CPAN" );
 								}
 							}
 						}
@@ -287,15 +295,16 @@ sub _analyze {
 			} else {
 				if ( defined $section ) {
 					if ( ! exists $own_sections->{ $section } ) {
-						push( @errors, "$file:$linenum:$column - Unknown local pod section '$section'" );
+						push( @errors, "$file:$linenum:$column - Unknown link type(pod) to(local) section($section) - section doesn't exist!" );
 					}
 				} else {
 					# no to/section eh?
-					die "Invalid link: $l";
+					push( @errors, "$file:$linenum:$column - Malformed link type(pod) to() section()" );
 				}
 			}
 		} else {
-			die "Unknown type: $type";
+			# unknown type?
+			push( @errors, "$file:$linenum:$column - Unknown link type($type) to(" . ( defined $to ? $to : '' ) . ") section(" . ( defined $section ? $section : '' ) . ")" );
 		}
 	}
 
@@ -370,6 +379,11 @@ sub _known_cpan {
 
 	# Do we even check CPAN?
 	if ( ! $self->check_cpan ) {
+		return undef;
+	}
+
+	# Sanity check - we use '.' as the actual cache placeholder...
+	if ( $module eq '.' ) {
 		return undef;
 	}
 
@@ -454,10 +468,9 @@ sub _known_cpan_cpansqlite {
 			$cache->{'.'} = CPAN::SQLite->new;
 		};
 		if ( $@ ) {
-			$self->check_cpan( 0 );
 			delete $cache->{'.'} if exists $cache->{'.'};
 			warn "Unable to load CPANSQLite - disabling CPAN searches! ( $@ )" if $self->verbose;
-			return undef;
+			die "You enabled check_cpan but no CPAN backend is functional!";
 		}
 	}
 
@@ -606,9 +619,24 @@ C<pod_ok> function to be imported when you use this module.
 	use Test::Pod::LinkCheck qw( all_pod_ok );
 	all_pod_ok();
 
+=head1 NOTES
+
+=head2 backend
+
+This module uses the L<CPANPLUS> and L<CPAN> modules as the backend to verify valid CPAN modules. Please make sure that the backend you
+choose is properly configured before running this! This means the index is updated, permissions is set, and whatever else the backend
+needs to properly function. If you don't want to use them please disable the L<check_cpan> attribute.
+
+If this module fails to check CPAN modules or the testsuite fails, it's probably because of the above reason.
+
+=head2 CPAN module sections
+
+One limitation of this module is that it can't check for valid sections on CPAN modules if they aren't installed. If you want that to be an
+error, please enable the L<cpan_section_err> attribute.
+
 =head1 SEE ALSO
-L<App::PodLinkCheck>
-L<Pod::Checker>
-L<Test::Pod::No404s>
+App::PodLinkCheck
+Pod::Checker
+Test::Pod::No404s
 
 =cut
