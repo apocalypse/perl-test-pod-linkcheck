@@ -1,9 +1,9 @@
 #!/usr/bin/perl
 
-use File::Temp qw( tempfile );
 use Test::Tester;
 use Test::More;
 use Test::Pod::LinkCheck;
+use File::Temp qw( tempfile );
 
 my %tests = (
 	'empty'		=> {
@@ -87,7 +87,7 @@ foreach my $t ( keys %tests ) {
 				$fh->autoflush( 1 );
 				print $fh delete $tests{ $t }{'pod'};
 				my $checker = Test::Pod::LinkCheck->new;
-				my $is_todo = delete $tests{ $t }{'todo'};
+				my $is_todo = $tests{ $t }{'todo'};
 				if ( defined $is_todo ) {
 					TODO: {
 						local $TODO = $is_todo;
@@ -100,6 +100,12 @@ foreach my $t ( keys %tests ) {
 			},
 		);
 	};
+
+	# mangle the TODO stuff
+	if ( exists $tests{ $t }{'todo'} ) {
+		$results[0]->{'ok'} = $tests{ $t }{'ok'};
+		delete $tests{ $t }{'todo'};
+	}
 
 	ok( ! $@, "$t completed" );
 	is( scalar @results, 1, "$t contained 1 test" );
