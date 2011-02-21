@@ -2,6 +2,12 @@ Revision history for Test::Pod::LinkCheck
 
 {{$NEXT}}
 
+	Squashed some test failures by skipping them, thanks CPANTesters!
+	Re-worded the output to make it clearer
+	Changed the "verbose" attr to false by default
+	Add the "cpan_backend_auto" attr to control automatic backend selection logic
+	Clarified a lot of things in the POD
+
 0.004
 	Released: 2010-05-28 04:29:48 UTC
 

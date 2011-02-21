@@ -17,8 +17,10 @@ our @EXPORT_OK = qw( pod_ok all_pod_ok );
 
 =attr check_cpan
 
-If disabled, this module will not check the CPAN module database to see if a link is a valid CPAN module or not. This means
-it will resolve links based on locally installed modules. If it isn't installed it will be an error!
+If enabled, this module will check the CPAN module database to see if a link is a valid CPAN module or not. It uses the backend
+defined in L</cpan_backend> to do the actual searching.
+
+If disabled, it will resolve links based on locally installed modules. If it isn't installed it will be an error!
 
 The default is: true
 
@@ -39,22 +41,45 @@ Selects the CPAN backend to use for querying modules. The available ones are: CP
 
 The default is: CPANPLUS
 
+	The backends were tested and verified against those versions. Older versions would work, but is untested!
+		CPANPLUS v0.9010
+		CPAN v1.9402
+		CPAN::SQLite v0.199
+
 =cut
 
+	# TODO add CPANIDX?
 	has 'cpan_backend' => (
 		is	=> 'rw',
 		isa	=> enum( [ qw( CPANPLUS CPAN CPANSQLite ) ] ),
 		default	=> 'CPANPLUS',
-		trigger => \&_clean_backend,
+		trigger => \&_clean_cpan_backend,
 	);
 
-	sub _clean_backend {
+	sub _clean_cpan_backend {
 		my( $self, $new, $old ) = @_;
 
-		# Just clear the cpan backend
+		# Just clear the cpan cache
 		$self->_cache->{'cpan'} = {};
+		$self->_backend_err( 0 );
 	}
 }
+
+=attr cpan_backend_auto
+
+Enable to automatically try the CPAN backends to find an available one. It will try the backends in the order defined in L</cpan_backend>
+
+If no backend is available, it will disable the L</check_cpan> attribute and enable the L</cpan_section_err> attribute.
+
+The default is: true
+
+=cut
+
+has 'cpan_backend_auto' => (
+	is	=> 'rw',
+	isa	=> 'Bool',
+	default	=> 1,
+);
 
 =attr cpan_section_err
 
@@ -67,14 +92,14 @@ The default is: false
 has 'cpan_section_err' => (
 	is	=> 'rw',
 	isa	=> 'Bool',
-	default	=> 1,
+	default	=> 0,
 );
 
 =attr verbose
 
 If enabled, this module will print extra diagnostics for the links it's checking.
 
-The default is: true
+The default is: false
 
 =cut
 
@@ -84,6 +109,7 @@ has 'verbose' => (
 	default	=> 0,
 );
 
+# holds the cached results of link look-ups
 has '_cache' => (
 	is	=> 'ro',
 	isa	=> 'HashRef',
@@ -94,6 +120,23 @@ has '_cache' => (
 		'section'	=> {},
 	} },
 );
+
+# is the backend good to use?
+has '_backend_err' => (
+	is	=> 'rw',
+	isa	=> 'Bool',
+	default	=> 0,
+	trigger => \&_clean_backend_err,
+);
+
+sub _clean_backend_err {
+	my( $self, $new, $old ) = @_;
+
+	# Only clean if an error happened
+	if ( $new ) {
+		$self->_cache->{'cpan'} = {};
+	}
+}
 
 =method pod_ok
 
@@ -234,8 +277,8 @@ sub _analyze {
 	foreach my $l ( @$links ) {
 		## no critic ( ProhibitAccessOfPrivateData )
 		my( $type, $to, $section, $linenum, $column ) = @$l;
-#		push( @diag, "$file:$linenum:$column - Checking link type($type) to(" . ( defined $to ? $to : '' ) . ") " .
-#			"section(" . ( defined $section ? $section : '' ) . ")" );
+		push( @diag, "$file:$linenum:$column - Checking link type($type) to(" . ( defined $to ? $to : '' ) . ") " .
+			"section(" . ( defined $section ? $section : '' ) . ")" ) if $self->verbose;
 
 		# What kind of link?
 		if ( $type eq 'man' ) {
@@ -295,7 +338,7 @@ sub _analyze {
 			} else {
 				if ( defined $section ) {
 					if ( ! exists $own_sections->{ $section } ) {
-						push( @errors, "$file:$linenum:$column - Unknown link type(pod) to(local) section($section) - section doesn't exist!" );
+						push( @errors, "$file:$linenum:$column - Unknown link type(pod) to() section($section) - section doesn't exist!" );
 					}
 				} else {
 					# no to/section eh?
@@ -382,6 +425,11 @@ sub _known_cpan {
 		return undef;
 	}
 
+	# Did the backend encounter an error?
+	if ( $self->_backend_err ) {
+		return undef;
+	}
+
 	# Sanity check - we use '.' as the actual cache placeholder...
 	if ( $module eq '.' ) {
 		return undef;
@@ -430,53 +478,30 @@ sub _known_cpan_cpanplus {
 			$cache->{'.'} = CPANPLUS::Backend->new( $cpanconfig );
 		};
 		if ( $@ ) {
-			warn "Unable to load CPANPLUS - switching to CPAN ( $@ )" if $self->verbose;
-			$self->cpan_backend( 'CPAN' );
-			return $self->_known_cpan( $module );
+			warn "Unable to load CPANPLUS - $@" if $self->verbose;
+			if ( $self->cpan_backend_auto ) {
+				$self->cpan_backend( 'CPAN' );
+				return $self->_known_cpan_cpan( $module );
+			} else {
+				$self->_backend_err( 1 );
+				return undef;
+			}
 		}
 	}
 
 	my $result = undef;
 	eval { local $SIG{'__WARN__'} = sub { return }; $result = $cache->{'.'}->parse_module( 'module' => $module ) };
-	if ( ! $@ and defined $result ) {
-		$cache->{ $module } = 1;
-	} else {
-		$cache->{ $module } = 0;
-	}
-
-	return $cache->{ $module };
-}
-
-sub _known_cpan_cpansqlite {
-	my( $self, $module ) = @_;
-	my $cache = $self->_cache->{'cpan'};
-
-	# init the backend ( and set some options )
-	if ( ! exists $cache->{'.'} ) {
-		eval {
-			# Wacky format so dzil will not autoprereq it
-			require 'CPAN.pm'; require 'CPAN/SQLite.pm';
-
-			# TODO this code stolen from App::PodLinkCheck
-			# not sure how far back this will work, maybe only 5.8.0 up
-			if ( ! $CPAN::Config_loaded && CPAN::HandleConfig->can( 'load' ) ) {
-				# fake $loading to avoid running the CPAN::FirstTime dialog -- is this the right way to do that?
-				local $CPAN::HandleConfig::loading = 1;
-				CPAN::HandleConfig->load;
-			}
-
-			$cache->{'.'} = CPAN::SQLite->new;
-		};
-		if ( $@ ) {
-			delete $cache->{'.'} if exists $cache->{'.'};
-			warn "Unable to load CPANSQLite - disabling CPAN searches! ( $@ )" if $self->verbose;
-			die "You enabled check_cpan but no CPAN backend is functional!";
+	if ( $@ ) {
+		warn "Unable to use CPANPLUS - $@" if $self->verbose;
+		if ( $self->cpan_backend_auto ) {
+			$self->cpan_backend( 'CPAN' );
+			return $self->_known_cpan_cpan( $module );
+		} else {
+			$self->_backend_err( 1 );
+			return undef;
 		}
 	}
-
-	my $result = undef;
-	eval { local $SIG{'__WARN__'} = sub { return }; $result = $cache->{'.'}->query( 'mode' => 'module', name => $module, max_results => 1 ) };
-	if ( ! $@ and defined $result ) {
+	if ( defined $result ) {
 		$cache->{ $module } = 1;
 	} else {
 		$cache->{ $module } = 0;
@@ -525,13 +550,73 @@ sub _known_cpan_cpan {
 			$cache->{'.'} = $CPAN::META->{'readwrite'}->{'CPAN::Module'};
 		};
 		if ( $@ ) {
-			warn "Unable to load CPAN - switching to CPANSQLite ( $@ )" if $self->verbose;
-			$self->cpan_backend( 'CPANSQLite' );
-			return $self->_known_cpan( $module );
+			warn "Unable to load CPAN - $@" if $self->verbose;
+			if ( $self->cpan_backend_auto ) {
+				$self->cpan_backend( 'CPANSQLite' );
+				return $self->_known_cpan_cpansqlite( $module );
+			} else {
+				$self->_backend_err( 1 );
+				return undef;
+			}
 		}
 	}
 
 	if ( exists $cache->{'.'}{ $module } ) {
+		$cache->{ $module } = 1;
+	} else {
+		$cache->{ $module } = 0;
+	}
+
+	return $cache->{ $module };
+}
+
+sub _known_cpan_cpansqlite {
+	my( $self, $module ) = @_;
+	my $cache = $self->_cache->{'cpan'};
+
+	# init the backend ( and set some options )
+	if ( ! exists $cache->{'.'} ) {
+		eval {
+			# Wacky format so dzil will not autoprereq it
+			require 'CPAN.pm'; require 'CPAN/SQLite.pm';
+
+			# TODO this code stolen from App::PodLinkCheck
+			# not sure how far back this will work, maybe only 5.8.0 up
+			if ( ! $CPAN::Config_loaded && CPAN::HandleConfig->can( 'load' ) ) {
+				# fake $loading to avoid running the CPAN::FirstTime dialog -- is this the right way to do that?
+				local $CPAN::HandleConfig::loading = 1;
+				CPAN::HandleConfig->load;
+			}
+
+			$cache->{'.'} = CPAN::SQLite->new;
+		};
+		if ( $@ ) {
+			warn "Unable to load CPANSQLite - $@" if $self->verbose;
+			if ( $self->cpan_backend_auto ) {
+				warn "Unable to use any CPAN backend, disabling searches!" if $self->verbose;
+				$self->check_cpan( 0 );
+				$self->cpan_section_err( 1 );
+			}
+
+			$self->_backend_err( 1 );
+			return undef;
+		}
+	}
+
+	my $result = undef;
+	eval { local $SIG{'__WARN__'} = sub { return }; $result = $cache->{'.'}->query( 'mode' => 'module', name => $module, max_results => 1 ); };
+	if ( $@ ) {
+		warn "Unable to use CPANSQLite - $@" if $self->verbose;
+		if ( $self->cpan_backend_auto ) {
+			warn "Unable to use any CPAN backend, disabling searches!" if $self->verbose;
+			$self->check_cpan( 0 );
+			$self->cpan_section_err( 1 );
+		}
+
+		$self->_backend_err( 1 );
+		return undef;
+	}
+	if ( $result ) {
 		$cache->{ $module } = 1;
 	} else {
 		$cache->{ $module } = 0;
@@ -601,8 +686,7 @@ __PACKAGE__->meta->make_immutable;
 
 This module looks for any links in your POD and verifies that they point to a valid resource. It uses the L<Pod::Simple> parser
 to analyze the pod files and look at their links. In a nutshell, it looks for C<LE<lt>FooE<gt>> links and makes sure that Foo
-exists. It also recognizes section links, C<LE<lt>/SYNOPSISE<gt>> for example. Also, manpages are resolved and checked. If you
-linked to a CPAN module and it is not installed, it is an error!
+exists. It also recognizes section links, C<LE<lt>/SYNOPSISE<gt>> for example. Also, manpages are resolved and checked.
 
 This module does B<NOT> check "http" links like C<LE<lt>http://www.google.comE<gt>> in your pod. For that, please check
 out L<Test::Pod::No404s>.
@@ -625,14 +709,14 @@ C<pod_ok> function to be imported when you use this module.
 
 This module uses the L<CPANPLUS> and L<CPAN> modules as the backend to verify valid CPAN modules. Please make sure that the backend you
 choose is properly configured before running this! This means the index is updated, permissions is set, and whatever else the backend
-needs to properly function. If you don't want to use them please disable the L<check_cpan> attribute.
+needs to properly function. If you don't want to use them please disable the L</check_cpan> attribute.
 
 If this module fails to check CPAN modules or the testsuite fails, it's probably because of the above reason.
 
 =head2 CPAN module sections
 
 One limitation of this module is that it can't check for valid sections on CPAN modules if they aren't installed. If you want that to be an
-error, please enable the L<cpan_section_err> attribute.
+error, please enable the L</cpan_section_err> attribute.
 
 =head1 SEE ALSO
 App::PodLinkCheck
