@@ -2,6 +2,9 @@ Revision history for Test::Pod::LinkCheck
 
 {{$NEXT}}
 
+0.005
+	Released: 2011-02-21 21:56:25 UTC
+
 	Squashed some test failures by skipping them, thanks CPANTesters!
 	Re-worded the output to make it clearer
 	Changed the "verbose" attr to false by default
