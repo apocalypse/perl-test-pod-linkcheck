@@ -21,14 +21,17 @@ my %tests = (
 	'pass'		=> {
 		pod		=> "=head1 NAME\n\nHello from Foobar! Please visit L<Test::More> for more info!",
 		actual_ok	=> 1,
+		todo		=> "CPAN backends are not configured everywhere, thanks CPANTesters!",
 	},
 	'pass_cpan'		=> {
 		pod		=> "=head1 NAME\n\nHello from Foobar! Please visit L<Acme::Drunk> for more info!",
 		actual_ok	=> 1,
+		todo		=> "CPAN backends are not configured everywhere, thanks CPANTesters!",
 	},
 	'invalid'	=> {
 		pod		=> "=head1 NAME\n\nHello from Foobar! Please visit L<More::Fluffy::Stuff> for more info!",
 		actual_ok	=> 0,
+		todo		=> "CPAN backends are not configured everywhere, thanks CPANTesters!",
 	},
 	'invalid_sec'	=> {
 		pod		=> "=head1 NAME\n\nHello from L</Foobar>!",
@@ -57,10 +60,12 @@ my %tests = (
 	'pass_man'	=> {
 		pod		=> "=head1 NAME\n\nHello from L<man(1)>!",
 		actual_ok	=> 1,
+		todo		=> "man is not installed everywhere, thanks CPANTesters!",
 	},
 	'invalid_man'	=> {
 		pod		=> "=head1 NAME\n\nHello from L<famboozled(9)>!",
 		actual_ok	=> 0,
+		todo		=> "man is not installed everywhere, thanks CPANTesters!",
 	},
 );
 
@@ -68,21 +73,29 @@ plan tests => ( scalar keys %tests ) *  5;
 
 foreach my $t ( keys %tests ) {
 	# Add some generic data
-	if ( $tests{ $t }{ actual_ok } ) {
-		$tests{ $t }{ ok } = 1;
+	if ( $tests{ $t }{'actual_ok'} ) {
+		$tests{ $t }{'ok'} = 1;
 	} else {
-		$tests{ $t }{ ok } = 0;
+		$tests{ $t }{'ok'} = 0;
 	}
-	$tests{ $t }{ depth } = 1;
+	$tests{ $t }{'depth'} = 1;
 
 	my( $premature, @results ) = eval {
 		run_tests(
 			sub {
 				my( $fh, $filename ) = tempfile( UNLINK => 1 );
 				$fh->autoflush( 1 );
-				print $fh delete $tests{ $t }{ pod };
+				print $fh delete $tests{ $t }{'pod'};
 				my $checker = Test::Pod::LinkCheck->new;
-				$checker->pod_ok( $filename );
+				my $is_todo = delete $tests{ $t }{'todo'};
+				if ( defined $is_todo ) {
+					TODO: {
+						local $TODO = $is_todo;
+						$checker->pod_ok( $filename );
+					}
+				} else {
+					$checker->pod_ok( $filename );
+				}
 				undef $checker;
 			},
 		);
@@ -98,4 +111,3 @@ foreach my $t ( keys %tests ) {
 }
 
 done_testing();
-
