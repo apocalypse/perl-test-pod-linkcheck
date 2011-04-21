@@ -41,7 +41,7 @@ Selects the CPAN backend to use for querying modules. The available ones are: CP
 
 The default is: CPANPLUS
 
-	The backends were tested and verified against those versions. Older versions would work, but is untested!
+	The backends were tested and verified against those versions. Older versions should work, but is untested!
 		CPANPLUS v0.9010
 		CPAN v1.9402
 		CPAN::SQLite v0.199
