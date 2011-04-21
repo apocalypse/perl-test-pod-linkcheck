@@ -87,6 +87,11 @@ my %tests = (
 		actual_ok	=> 0,
 		todo		=> "man is not installed everywhere, thanks CPANTesters!",
 	},
+	'perlfunc'	=> {
+		pod		=> "=head1 NAME\n\nHello from us!\n\n=head1 Zonkers\n\nThis is the Foobar!\n\n=head1 Welcome\nLook at L<binmode> for info.",
+		actual_ok	=> 1,
+		todo		=> "perldoc is not installed everywhere, thanks CPANTesters!",
+	},
 );
 
 plan tests => ( scalar keys %tests ) *  5;

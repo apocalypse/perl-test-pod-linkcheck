@@ -309,27 +309,30 @@ sub _analyze {
 						}
 					}
 				} else {
-					# Do we have this file installed?
-					if ( ! $self->_known_podfile( $to ) ) {
-						# Sometimes we find a manpage but not the pod...
-						if ( ! $self->_known_manpage( $to ) ) {
-							# Is it a CPAN module?
-							my $res = $self->_known_cpan( $to );
-							if ( defined $res ) {
-								if ( ! $res ) {
+					# Is it a perlfunc reference?
+					if ( ! $self->_known_perlfunc( $to ) ) {
+						# Do we have this file installed?
+						if ( ! $self->_known_podfile( $to ) ) {
+							# Sometimes we find a manpage but not the pod...
+							if ( ! $self->_known_manpage( $to ) ) {
+								# Is it a CPAN module?
+								my $res = $self->_known_cpan( $to );
+								if ( defined $res ) {
+									if ( ! $res ) {
+										# Check for internal section
+										if ( exists $own_sections->{ $to } ) {
+											push( @diag, "$file:$linenum:$column - Link type(pod) to($to) looks like an internal section link - recommend 'L</$to>'" );
+										} else {
+											push( @errors, "$file:$linenum:$column - Unknown link type(pod) to($to) - module doesn't exist in CPAN" );
+										}
+									}
+								} else {
 									# Check for internal section
 									if ( exists $own_sections->{ $to } ) {
 										push( @diag, "$file:$linenum:$column - Link type(pod) to($to) looks like an internal section link - recommend 'L</$to>'" );
 									} else {
-										push( @errors, "$file:$linenum:$column - Unknown link type(pod) to($to) - module doesn't exist in CPAN" );
+										push( @errors, "$file:$linenum:$column - Unknown link type(pod) to($to) - unable to check CPAN" );
 									}
-								}
-							} else {
-								# Check for internal section
-								if ( exists $own_sections->{ $to } ) {
-									push( @diag, "$file:$linenum:$column - Link type(pod) to($to) looks like an internal section link - recommend 'L</$to>'" );
-								} else {
-									push( @errors, "$file:$linenum:$column - Unknown link type(pod) to($to) - unable to check CPAN" );
 								}
 							}
 						}
@@ -354,8 +357,31 @@ sub _analyze {
 	return( \@errors, \@diag );
 }
 
+sub _known_perlfunc {
+	my( $self, $func ) = @_;
+	my $cache = $self->_cache->{'func'};
+
+	if ( ! exists $cache->{ $func } ) {
+		# TODO this sucks, but Pod::Perldoc can't do it because it expects to be ran in the console...
+		require Capture::Tiny;
+		$cache->{ $func } = Capture::Tiny::capture_merged( sub {
+			system( 'perldoc -f ' . $func );
+		} );
+
+		# We need at least 5 newlines to guarantee a real perlfunc
+		# apoc@blackhole:~$ perldoc -f foobar
+		# No documentation for perl function `foobar' found
+		if ( ( $cache->{ $func } =~ tr/\n// ) > 5 ) {
+			$cache->{ $func } = 1;
+		} else {
+			$cache->{ $func } = 0;
+		}
+	}
+
+	return $cache->{ $func };
+}
+
 sub _known_manpage {
-	## no critic ( ProhibitAccessOfPrivateData )
 	my( $self, $page ) = @_;
 	my $cache = $self->_cache->{'man'};
 
@@ -384,7 +410,6 @@ sub _known_manpage {
 }
 
 sub _known_podfile {
-	## no critic ( ProhibitAccessOfPrivateData )
 	my( $self, $link ) = @_;
 	my $cache = $self->_cache->{'pod'};
 
@@ -417,7 +442,6 @@ sub _known_podfile {
 }
 
 sub _known_cpan {
-	## no critic ( ProhibitAccessOfPrivateData )
 	my( $self, $module ) = @_;
 
 	# Do we even check CPAN?
@@ -626,7 +650,6 @@ sub _known_cpan_cpansqlite {
 }
 
 sub _known_podlink {
-	## no critic ( ProhibitAccessOfPrivateData )
 	my( $self, $link, $section ) = @_;
 
 	# First of all, does the file exists?
@@ -643,7 +666,6 @@ sub _known_podlink {
 }
 
 sub _known_podsections {
-	## no critic ( ProhibitAccessOfPrivateData )
 	my( $self, $filename ) = @_;
 	my $cache = $self->_cache->{'sections'};
 
