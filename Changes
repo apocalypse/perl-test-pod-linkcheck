@@ -2,6 +2,9 @@ Revision history for Test::Pod::LinkCheck
 
 {{$NEXT}}
 
+0.006
+	Released: 2011-04-21 17:17:08 UTC
+
 	Add the ability to scan for perlfunc stuff ( thanks RT#67625 )
 
 0.005
