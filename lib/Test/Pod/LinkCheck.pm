@@ -12,7 +12,7 @@ use Test::Builder 0.94;
 my $Test = Test::Builder->new;
 
 # export our 2 subs
-use base qw( Exporter );
+use parent qw( Exporter );
 our @EXPORT_OK = qw( pod_ok all_pod_ok );
 
 =attr check_cpan
@@ -426,7 +426,7 @@ sub _known_podfile {
 			require File::Spec;
 			require Config;
 			foreach my $dir ( split /\Q$Config::Config{'path_sep'}/o, $ENV{'PATH'} ) {
-				my $filename = File::Spec->catfile( $dir, $link );
+				$filename = File::Spec->catfile( $dir, $link );
 				if ( -e $filename ) {
 					$cache->{ $link } = $filename;
 					last;
@@ -446,17 +446,17 @@ sub _known_cpan {
 
 	# Do we even check CPAN?
 	if ( ! $self->check_cpan ) {
-		return undef;
+		return;
 	}
 
 	# Did the backend encounter an error?
 	if ( $self->_backend_err ) {
-		return undef;
+		return;
 	}
 
 	# Sanity check - we use '.' as the actual cache placeholder...
 	if ( $module eq '.' ) {
-		return undef;
+		return;
 	}
 
 	# is the answer cached already?
@@ -508,12 +508,12 @@ sub _known_cpan_cpanplus {
 				return $self->_known_cpan_cpan( $module );
 			} else {
 				$self->_backend_err( 1 );
-				return undef;
+				return;
 			}
 		}
 	}
 
-	my $result = undef;
+	my $result;
 	eval { local $SIG{'__WARN__'} = sub { return }; $result = $cache->{'.'}->parse_module( 'module' => $module ) };
 	if ( $@ ) {
 		warn "Unable to use CPANPLUS - $@" if $self->verbose;
@@ -522,7 +522,7 @@ sub _known_cpan_cpanplus {
 			return $self->_known_cpan_cpan( $module );
 		} else {
 			$self->_backend_err( 1 );
-			return undef;
+			return;
 		}
 	}
 	if ( defined $result ) {
@@ -580,7 +580,7 @@ sub _known_cpan_cpan {
 				return $self->_known_cpan_cpansqlite( $module );
 			} else {
 				$self->_backend_err( 1 );
-				return undef;
+				return;
 			}
 		}
 	}
@@ -623,11 +623,11 @@ sub _known_cpan_cpansqlite {
 			}
 
 			$self->_backend_err( 1 );
-			return undef;
+			return;
 		}
 	}
 
-	my $result = undef;
+	my $result;
 	eval { local $SIG{'__WARN__'} = sub { return }; $result = $cache->{'.'}->query( 'mode' => 'module', name => $module, max_results => 1 ); };
 	if ( $@ ) {
 		warn "Unable to use CPANSQLite - $@" if $self->verbose;
@@ -638,7 +638,7 @@ sub _known_cpan_cpansqlite {
 		}
 
 		$self->_backend_err( 1 );
-		return undef;
+		return;
 	}
 	if ( $result ) {
 		$cache->{ $module } = 1;
