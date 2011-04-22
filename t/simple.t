@@ -129,6 +129,7 @@ foreach my $t ( keys %tests ) {
 	# mangle the TODO stuff
 	if ( exists $tests{ $t }{'todo'} ) {
 		$results[0]->{'ok'} = $tests{ $t }{'ok'};
+		$results[0]->{'actual_ok'} = $tests{ $t }{'actual_ok'};
 		delete $tests{ $t }{'todo'};
 	}
 
