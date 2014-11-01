@@ -1,19 +1,18 @@
-Revision history for Test::Pod::LinkCheck
+Revision history for {{$dist->name}}
 
 {{$NEXT}}
 
-0.007
-	Released: 2011-04-22 04:31:32 UTC
+	Updates to the automatically-generated files ( thanks RT#76821 )
+
+0.007	2011-04-22 04:31:32 UTC
 
 	Finally fix a long-standing testsuite FAIL, I hope! ( thanks RT#67126 and RT#65752 )
 
-0.006
-	Released: 2011-04-21 17:17:08 UTC
+0.006	2011-04-21 17:17:08 UTC
 
 	Add the ability to scan for perlfunc stuff ( thanks RT#67625 )
 
-0.005
-	Released: 2011-02-21 21:56:25 UTC
+0.005	2011-02-21 21:56:25 UTC
 
 	Squashed some test failures by skipping them, thanks CPANTesters!
 	Re-worded the output to make it clearer
@@ -21,22 +20,18 @@ Revision history for Test::Pod::LinkCheck
 	Add the "cpan_backend_auto" attr to control automatic backend selection logic
 	Clarified a lot of things in the POD
 
-0.004
-	Released: 2010-05-28 04:29:48 UTC
+0.004	2010-05-28 04:29:48 UTC
 
 	ready for CPAN
 
-0.003
-	Released: 2010-05-28 04:26:57 UTC
+0.003	2010-05-28 04:26:57 UTC
 
 	fixed the SIGNATURE stuff
 
-0.002
-	Released: 2010-05-28 04:20:14 UTC
+0.002	2010-05-28 04:20:14 UTC
 
 	fix stopwords for POD spelling test
 
-0.001
-	Released: 2010-05-28 04:16:42 UTC
+0.001	2010-05-28 04:16:42 UTC
 
 	initial release
