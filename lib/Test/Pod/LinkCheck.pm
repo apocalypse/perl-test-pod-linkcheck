@@ -37,22 +37,24 @@ has 'check_cpan' => (
 
 =attr cpan_backend
 
-Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPAN, CPANSQLite, and MetaDB.
+Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPAN, CPANSQLite, MetaDB, and MetaCPAN.
 
-The default is: MetaDB
+The default is: CPANPLUS
 
 	The backends were tested and verified against those versions. Older versions should work, but is untested!
 		CPANPLUS v0.9010
 		CPAN v1.9402
 		CPAN::SQLite v0.199
 		CPAN::Common::Index::MetaDB v0.005
+		MetaCPAN::API::Tiny v1.131730
+		MetaCPAN::Client v1.007001
 
 =cut
 
 	# TODO add CPANIDX?
 	has 'cpan_backend' => (
 		is	=> 'rw',
-		isa	=> enum( [ qw( CPANPLUS CPAN CPANSQLite MetaDB ) ] ),
+		isa	=> enum( [ qw( CPANPLUS CPAN CPANSQLite MetaDB MetaCPAN ) ] ),
 		default	=> 'CPANPLUS',
 		trigger => \&_clean_cpan_backend,
 	);
@@ -476,7 +478,9 @@ sub _known_cpan {
 	}
 
 	# Select the backend?
-	if ( $self->cpan_backend eq 'MetaDB' ) {
+	if ( $self->cpan_backend eq 'MetaCPAN' ) {
+		return $self->_known_cpan_metacpan( $module );
+	} elsif ( $self->cpan_backend eq 'MetaDB' ) {
 		return $self->_known_cpan_metadb( $module );
 	} elsif ( $self->cpan_backend eq 'CPANPLUS' ) {
 		return $self->_known_cpan_cpanplus( $module );
@@ -487,6 +491,43 @@ sub _known_cpan {
 	} else {
 		die "Unknown backend: " . $self->cpan_backend;
 	}
+}
+
+sub _known_cpan_metacpan {
+	my( $self, $module ) = @_;
+	my $cache = $self->_cache->{'cpan'};
+	$Test->diag( "cpan:MetaCPAN check for $module" ) if $self->verbose;
+	# init the backend ( and set some options )
+	if ( ! exists $cache->{'.'} ) {
+		eval {
+			# Wacky format so dzil will not autoprereq it
+			require 'MetaCPAN/API/Tiny.pm';
+
+			$cache->{'.'} = MetaCPAN::API::Tiny->new;
+		};
+		if ( $@ ) {
+			$Test->diag( "Unable to load MetaCPAN::API::Tiny - $@" ) if $self->verbose;
+			eval {
+				require 'MetaCPAN/Client.pm';
+
+				$cache->{'.'} = MetaCPAN::Client->new;
+			};
+			if ( $@ ) {
+				$Test->diag( "Unable to load MetaCPAN::Client - $@" ) if $self->verbose;
+				if ( $self->cpan_backend_auto ) {
+					$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
+					$self->check_cpan( 0 );
+					$self->cpan_section_err( 1 );
+				} else {
+					$self->_backend_err( 1 );
+				}
+				return;
+			}
+		}
+	}
+
+	$cache->{$module} = defined $cache->{'.'}->module( $module ) ? 1 : 0;
+	return $cache->{$module};
 }
 
 sub _known_cpan_metadb {
@@ -504,9 +545,8 @@ sub _known_cpan_metadb {
 		if ( $@ ) {
 			$Test->diag( "Unable to load MetaDB - $@" ) if $self->verbose;
 			if ( $self->cpan_backend_auto ) {
-				$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
-				$self->check_cpan( 0 );
-				$self->cpan_section_err( 1 );
+				$self->cpan_backend( 'MetaCPAN' );
+				return $self->_known_cpan_metacpan( $module );
 			} else {
 				$self->_backend_err( 1 );
 				return;

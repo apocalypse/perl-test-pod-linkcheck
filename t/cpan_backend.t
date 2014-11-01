@@ -3,7 +3,7 @@
 use Test::More;
 use Test::Pod::LinkCheck;
 
-my @backends = qw( CPANPLUS CPAN CPANSQLite MetaDB );
+my @backends = qw( CPANPLUS CPAN CPANSQLite MetaDB MetaCPAN );
 plan tests => scalar @backends * 4;
 
 foreach my $backend ( @backends ) {
