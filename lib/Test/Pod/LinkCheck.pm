@@ -478,7 +478,9 @@ sub _known_cpan {
 	}
 
 	# Select the backend?
-	if ( $self->cpan_backend eq 'MetaCPAN' ) {
+	if ( $self->cpan_backend eq 'CPANIDX' ) {
+		return $self->_known_cpan_cpanidx( $module );
+	} elsif ( $self->cpan_backend eq 'MetaCPAN' ) {
 		return $self->_known_cpan_metacpan( $module );
 	} elsif ( $self->cpan_backend eq 'MetaDB' ) {
 		return $self->_known_cpan_metadb( $module );
