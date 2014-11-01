@@ -369,7 +369,7 @@ sub _analyze {
 sub _known_perlfunc {
 	my( $self, $func ) = @_;
 	my $cache = $self->_cache->{'func'};
-	$Test->diag( "perlfunc check for $func" ) if $self->verbose;
+#	$Test->diag( "perlfunc check for $func" ) if $self->verbose;
 	if ( ! exists $cache->{ $func } ) {
 		# TODO this sucks, but Pod::Perldoc can't do it because it expects to be ran in the console...
 		require Capture::Tiny;
@@ -393,7 +393,7 @@ sub _known_perlfunc {
 sub _known_manpage {
 	my( $self, $page ) = @_;
 	my $cache = $self->_cache->{'man'};
-	$Test->diag( "manpage check for $page" ) if $self->verbose;
+#	$Test->diag( "manpage check for $page" ) if $self->verbose;
 	if ( ! exists $cache->{ $page } ) {
 		my @manargs;
 		if ( $page =~ /(.+)\s*\((.+)\)$/ ) {
@@ -421,7 +421,7 @@ sub _known_manpage {
 sub _known_podfile {
 	my( $self, $link ) = @_;
 	my $cache = $self->_cache->{'pod'};
-	$Test->diag( "podfile check for $link" ) if $self->verbose;
+#	$Test->diag( "podfile check for $link" ) if $self->verbose;
 	if ( ! exists $cache->{ $link } ) {
 		# Is it a plain POD file?
 		require Pod::Find;
@@ -496,7 +496,7 @@ sub _known_cpan {
 sub _known_cpan_metacpan {
 	my( $self, $module ) = @_;
 	my $cache = $self->_cache->{'cpan'};
-	$Test->diag( "cpan:MetaCPAN check for $module" ) if $self->verbose;
+#	$Test->diag( "cpan:MetaCPAN check for $module" ) if $self->verbose;
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
@@ -526,14 +526,19 @@ sub _known_cpan_metacpan {
 		}
 	}
 
-	$cache->{$module} = defined $cache->{'.'}->module( $module ) ? 1 : 0;
+	# API::Tiny just dies on bad modules...
+	eval { $cache->{$module} = defined $cache->{'.'}->module( $module ) ? 1 : 0 };
+	if ( $@ ) {
+		$Test->diag( "Unable to find $module on MetaCPAN: $@" ) if $self->verbose;
+		$cache->{$module} = 0;
+	}
 	return $cache->{$module};
 }
 
 sub _known_cpan_metadb {
 	my( $self, $module ) = @_;
 	my $cache = $self->_cache->{'cpan'};
-	$Test->diag( "cpan:MetaDB check for $module" ) if $self->verbose;
+#	$Test->diag( "cpan:MetaDB check for $module" ) if $self->verbose;
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
@@ -561,7 +566,7 @@ sub _known_cpan_metadb {
 sub _known_cpan_cpanplus {
 	my( $self, $module ) = @_;
 	my $cache = $self->_cache->{'cpan'};
-	$Test->diag( "cpan:CPANPLUS check for $module" ) if $self->verbose;
+#	$Test->diag( "cpan:CPANPLUS check for $module" ) if $self->verbose;
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
@@ -619,7 +624,7 @@ sub _known_cpan_cpanplus {
 sub _known_cpan_cpan {
 	my( $self, $module ) = @_;
 	my $cache = $self->_cache->{'cpan'};
-	$Test->diag( "cpan:CPAN check for $module" ) if $self->verbose;
+#	$Test->diag( "cpan:CPAN check for $module" ) if $self->verbose;
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
@@ -679,7 +684,7 @@ sub _known_cpan_cpan {
 sub _known_cpan_cpansqlite {
 	my( $self, $module ) = @_;
 	my $cache = $self->_cache->{'cpan'};
-	$Test->diag( "cpan:CPANSQLite check for $module" ) if $self->verbose;
+#	$Test->diag( "cpan:CPANSQLite check for $module" ) if $self->verbose;
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
@@ -731,7 +736,7 @@ sub _known_cpan_cpansqlite {
 
 sub _known_podlink {
 	my( $self, $link, $section ) = @_;
-	$Test->diag( "podlink check for $link - $section" ) if $self->verbose;
+#	$Test->diag( "podlink check for $link - $section" ) if $self->verbose;
 	# First of all, does the file exists?
 	my $filename = $self->_known_podfile( $link );
 	return 0 if ! defined $filename;
@@ -748,7 +753,7 @@ sub _known_podlink {
 sub _known_podsections {
 	my( $self, $filename ) = @_;
 	my $cache = $self->_cache->{'sections'};
-	$Test->diag( "podsections check for $filename" ) if $self->verbose;
+#	$Test->diag( "podsections check for $filename" ) if $self->verbose;
 	if ( ! exists $cache->{ $filename } ) {
 		# Okay, get the sections in the file
 		require App::PodLinkCheck::ParseSections;
