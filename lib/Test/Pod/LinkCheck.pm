@@ -58,9 +58,7 @@ The default is: MetaDB
 	);
 
 	sub _clean_cpan_backend {
-		my( $self, $new, $old ) = @_;
-
-		# Just clear the cpan cache
+		my $self = shift;
 		$self->_cache->{'cpan'} = {};
 		$self->_backend_err( 0 );
 	}
@@ -131,7 +129,8 @@ has '_backend_err' => (
 );
 
 sub _clean_backend_err {
-	my( $self, $new, $old ) = @_;
+	my $self = shift;
+	my $new = shift;
 
 	# Only clean if an error happened
 	if ( $new ) {
