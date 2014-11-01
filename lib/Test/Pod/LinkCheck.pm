@@ -502,34 +502,50 @@ sub _known_cpan_cpanidx {
 	if ( ! exists $cache->{'.'} ) {
 		eval {
 			# Wacky format so dzil will not autoprereq it
-			require 'LWP/UserAgent.pm';
-
-			$cache->{'.'} = LWP::UserAgent->new( keep_alive => 1 );
+			require 'HTTP/Tiny.pm';
+			$cache->{'.'} = HTTP::Tiny->new;
 		};
 		if ( $@ ) {
-			$Test->diag( "Unable to load LWP - $@" ) if $self->verbose;
-			if ( $self->cpan_backend_auto ) {
-				$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
-				$self->check_cpan( 0 );
-				$self->cpan_section_err( 1 );
-			} else {
-				$self->_backend_err( 1 );
+			$Test->diag( "Unable to load HTTP::Tiny - $@" ) if $self->verbose;
+			eval {
+				require 'LWP/UserAgent.pm';
+				$cache->{'.'} = LWP::UserAgent->new( keep_alive => 1 );
+			};
+			if ( $@ ) {
+				$Test->diag( "Unable to load LWP::UserAgent - $@" ) if $self->verbose;
+				if ( $self->cpan_backend_auto ) {
+					$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
+					$self->check_cpan( 0 );
+					$self->cpan_section_err( 1 );
+				} else {
+					$self->_backend_err( 1 );
+				}
+				return;
 			}
-			return;
 		}
 	}
 
 	eval {
 		my $res = $cache->{'.'}->get("http://cpanidx.org/cpanidx/json/mod/$module");
-		if ( $res->is_success ) {
-			$cache->{$module} = 1;
+		if ( $res->isa( 'HTTP::Response' ) ? $res->is_success : $res->{success} ) {
+			# Did we get a hit?
+# apoc@box:~$ perl -MHTTP::Tiny -MData::Dumper::Concise -e 'print Dumper( HTTP::Tiny->new->get("http://cpanidx.org/cpanidx/json/mod/POE")->{content} )'
+# "[\n   {\n      \"dist_vers\" : \"1.365\",\n      \"dist_name\" : \"POE\",\n      \"cpan_id\" : \"RCAPUTO\",\n      \"mod_vers\" : \"1.365\",\n      \"dist_file\" : \"R/RC/RCAPUTO/POE-1.365.tar.gz\",\n      \"mod_name\" : \"POE\"\n   }\n]\n"
+# apoc@box:~$ perl -MHTTP::Tiny -MData::Dumper::Concise -e 'print Dumper( HTTP::Tiny->new->get("http://cpanidx.org/cpanidx/json/mod/Floo::Bar")->{content} )'
+# "[]\n"
+			if ( length( $res->isa( 'HTTP::Response' ) ? $res->decoded_content : $res->{content} ) > 5 ) {
+				$cache->{$module} = 1;
+			} else {
+				$cache->{$module} = 0;
+			}
 		} else {
-			$cache->{$module} = 0;
+			die "HTTP return non-success";
 		}
 	};
 	if ( $@ ) {
 		$Test->diag( "Unable to find $module on CPANIDX: $@" ) if $self->verbose;
-		$cache->{$module} = 0;
+		$self->_backend_err( 1 );
+		return;
 	}
 	return $cache->{$module};
 }
