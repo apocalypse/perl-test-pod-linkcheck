@@ -6,7 +6,6 @@ package Test::Pod::LinkCheck;
 use Moose 1.01;
 use Test::Pod 1.44 ();
 use App::PodLinkCheck::ParseLinks 4;
-use CPAN::Common::Index::MetaDB;
 
 # setup our tests and etc
 use Test::Builder 0.94;
@@ -38,23 +37,23 @@ has 'check_cpan' => (
 
 =attr cpan_backend
 
-Selects the CPAN backend to use for querying modules. The available ones are: MetaDB, CPANPLUS, CPAN, and CPANSQLite.
+Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPAN, CPANSQLite, and MetaDB.
 
 The default is: MetaDB
 
 	The backends were tested and verified against those versions. Older versions should work, but is untested!
-		CPAN::Common::Index::MetaDB v0.005
 		CPANPLUS v0.9010
 		CPAN v1.9402
 		CPAN::SQLite v0.199
+		CPAN::Common::Index::MetaDB v0.005
 
 =cut
 
 	# TODO add CPANIDX?
 	has 'cpan_backend' => (
 		is	=> 'rw',
-		isa	=> enum( [ qw( MetaDB CPANPLUS CPAN CPANSQLite ) ] ),
-		default	=> 'MetaDB',
+		isa	=> enum( [ qw( CPANPLUS CPAN CPANSQLite MetaDB ) ] ),
+		default	=> 'CPANPLUS',
 		trigger => \&_clean_cpan_backend,
 	);
 
@@ -455,7 +454,7 @@ sub _known_cpan {
 
 	# Sanity check - we use '.' as the actual cache placeholder...
 	if ( $module eq '.' ) {
-		return;
+		die 'sanity check';
 	}
 
 	# Do we even check CPAN?
@@ -498,13 +497,17 @@ sub _known_cpan_metadb {
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
+			# Wacky format so dzil will not autoprereq it
+			require 'CPAN/Common/Index/MetaDB.pm';
+
 			$cache->{'.'} = CPAN::Common::Index::MetaDB->new;
 		};
 		if ( $@ ) {
 			$Test->diag( "Unable to load MetaDB - $@" ) if $self->verbose;
 			if ( $self->cpan_backend_auto ) {
-				$self->cpan_backend( 'CPANPLUS' );
-				return $self->_known_cpan_cpanplus( $module );
+				$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
+				$self->check_cpan( 0 );
+				$self->cpan_section_err( 1 );
 			} else {
 				$self->_backend_err( 1 );
 				return;
@@ -657,13 +660,12 @@ sub _known_cpan_cpansqlite {
 		if ( $@ ) {
 			$Test->diag( "Unable to load CPANSQLite - $@" ) if $self->verbose;
 			if ( $self->cpan_backend_auto ) {
-				$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
-				$self->check_cpan( 0 );
-				$self->cpan_section_err( 1 );
+				$self->cpan_backend( 'MetaDB' );
+				return $self->_known_cpan_metadb( $module );
+			} else {
+				$self->_backend_err( 1 );
+				return;
 			}
-
-			$self->_backend_err( 1 );
-			return;
 		}
 	}
 
@@ -672,13 +674,12 @@ sub _known_cpan_cpansqlite {
 	if ( $@ ) {
 		$Test->diag( "Unable to use CPANSQLite - $@" ) if $self->verbose;
 		if ( $self->cpan_backend_auto ) {
-			$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
-			$self->check_cpan( 0 );
-			$self->cpan_section_err( 1 );
+			$self->cpan_backend( 'MetaDB' );
+			return $self->_known_cpan_metadb( $module );
+		} else {
+			$self->_backend_err( 1 );
+			return;
 		}
-
-		$self->_backend_err( 1 );
-		return;
 	}
 	if ( $result ) {
 		$cache->{ $module } = 1;
