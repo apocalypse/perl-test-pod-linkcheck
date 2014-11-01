@@ -3,6 +3,10 @@ Revision history for {{$dist->name}}
 {{$NEXT}}
 
 	Updates to the automatically-generated files ( thanks RT#76821 )
+	Suppress warnings and deaths in various places ( thanks RT#73280 and RT#83182 and RT#76342 phew! )
+	Improve the test output to help track down failures
+	Automatically enable verbose if $ENV{HARNESS_IS_VERBOSE} or $ENV{TEST_VERBOSE} ( thanks RT#76342 )
+	Add a new backend 'MetaDB' which queries the same online database cpanminus uses as a last resort ( thanks RT#77976 )
 
 0.007	2011-04-22 04:31:32 UTC
 
