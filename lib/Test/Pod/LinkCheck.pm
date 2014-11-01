@@ -360,7 +360,7 @@ sub _analyze {
 sub _known_perlfunc {
 	my( $self, $func ) = @_;
 	my $cache = $self->_cache->{'func'};
-
+	$Test->diag( "perlfunc check for $func" ) if $self->verbose;
 	if ( ! exists $cache->{ $func } ) {
 		# TODO this sucks, but Pod::Perldoc can't do it because it expects to be ran in the console...
 		require Capture::Tiny;
@@ -384,7 +384,7 @@ sub _known_perlfunc {
 sub _known_manpage {
 	my( $self, $page ) = @_;
 	my $cache = $self->_cache->{'man'};
-
+	$Test->diag( "manpage check for $page" ) if $self->verbose;
 	if ( ! exists $cache->{ $page } ) {
 		my @manargs;
 		if ( $page =~ /(.+)\s*\((.+)\)$/ ) {
@@ -412,7 +412,7 @@ sub _known_manpage {
 sub _known_podfile {
 	my( $self, $link ) = @_;
 	my $cache = $self->_cache->{'pod'};
-
+	$Test->diag( "podfile check for $link" ) if $self->verbose;
 	if ( ! exists $cache->{ $link } ) {
 		# Is it a plain POD file?
 		require Pod::Find;
@@ -444,20 +444,24 @@ sub _known_podfile {
 sub _known_cpan {
 	my( $self, $module ) = @_;
 
+	# Sanity check - we use '.' as the actual cache placeholder...
+	if ( $module eq '.' ) {
+		return;
+	}
+
 	# Do we even check CPAN?
 	if ( ! $self->check_cpan ) {
+		$Test->diag( "skipping cpan check for $module due to config" ) if $self->verbose;
 		return;
 	}
 
 	# Did the backend encounter an error?
 	if ( $self->_backend_err ) {
+		$Test->diag( "skipping cpan check for $module due to backend error" ) if $self->verbose;
 		return;
 	}
 
-	# Sanity check - we use '.' as the actual cache placeholder...
-	if ( $module eq '.' ) {
-		return;
-	}
+	$Test->diag( "cpan check for $module" ) if $self->verbose;
 
 	# is the answer cached already?
 	if ( exists $self->_cache->{'cpan'}{ $module } ) {
@@ -651,7 +655,7 @@ sub _known_cpan_cpansqlite {
 
 sub _known_podlink {
 	my( $self, $link, $section ) = @_;
-
+	$Test->diag( "podlink check for $link - $section" ) if $self->verbose;
 	# First of all, does the file exists?
 	my $filename = $self->_known_podfile( $link );
 	return 0 if ! defined $filename;
@@ -668,7 +672,7 @@ sub _known_podlink {
 sub _known_podsections {
 	my( $self, $filename ) = @_;
 	my $cache = $self->_cache->{'sections'};
-
+	$Test->diag( "podsections check for $filename" ) if $self->verbose;
 	if ( ! exists $cache->{ $filename } ) {
 		# Okay, get the sections in the file
 		require App::PodLinkCheck::ParseSections;
