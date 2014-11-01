@@ -100,14 +100,14 @@ has 'cpan_section_err' => (
 
 If enabled, this module will print extra diagnostics for the links it's checking.
 
-The default is: copy $ENV{TEST_VERBOSE} or false
+The default is: copy $ENV{HARNESS_IS_VERBOSE} or $ENV{TEST_VERBOSE} or false
 
 =cut
 
 has 'verbose' => (
 	is	=> 'rw',
 	isa	=> 'Bool',
-	default	=> sub { defined $ENV{TEST_VERBOSE} ? $ENV{TEST_VERBOSE} : 0 },
+	default	=> sub { defined $ENV{HARNESS_IS_VERBOSE} ? $ENV{HARNESS_IS_VERBOSE} : ( defined $ENV{TEST_VERBOSE} ? $ENV{TEST_VERBOSE} : 0 ) },
 );
 
 # holds the cached results of link look-ups
