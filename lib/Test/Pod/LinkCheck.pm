@@ -182,7 +182,14 @@ sub pod_ok {
 	$parser->complain_stderr( 0 );
 	$parser->no_errata_section( 0 );
 	$parser->no_whining( 0 );
-	$parser->parse_file( $file );
+
+	# numerous reports on RT show this blowing up often :(
+	eval { $parser->parse_file( $file ) };
+	if ( $@ ) {
+		$Test->ok( 0, $name );
+		$Test->diag( "Unable to parse $file => $@" ) if $self->verbose;
+		return 0;
+	}
 
 	# is POD well-formed?
 	if ( $parser->any_errata_seen ) {
@@ -677,8 +684,15 @@ sub _known_podsections {
 		# Okay, get the sections in the file
 		require App::PodLinkCheck::ParseSections;
 		my $parser = App::PodLinkCheck::ParseSections->new( {} );
-		$parser->parse_file( $filename );
-		$cache->{ $filename } = $parser->sections_hashref;
+
+		# numerous reports on RT show this blowing up often :(
+		eval { $parser->parse_file( $filename ) };
+		if ( $@ ) {
+			$Test->diag( "Unable to parse $filename => $@" ) if $self->verbose;
+			$cache->{ $filename } = undef;
+		} else {
+			$cache->{ $filename } = $parser->sections_hashref;
+		}
 	}
 
 	return $cache->{ $filename };
