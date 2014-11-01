@@ -6,6 +6,7 @@ package Test::Pod::LinkCheck;
 use Moose 1.01;
 use Test::Pod 1.44 ();
 use App::PodLinkCheck::ParseLinks 4;
+use CPAN::Common::Index::MetaDB;
 
 # setup our tests and etc
 use Test::Builder 0.94;
@@ -37,11 +38,12 @@ has 'check_cpan' => (
 
 =attr cpan_backend
 
-Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPAN, and CPANSQLite.
+Selects the CPAN backend to use for querying modules. The available ones are: MetaDB, CPANPLUS, CPAN, and CPANSQLite.
 
-The default is: CPANPLUS
+The default is: MetaDB
 
 	The backends were tested and verified against those versions. Older versions should work, but is untested!
+		CPAN::Common::Index::MetaDB v0.005
 		CPANPLUS v0.9010
 		CPAN v1.9402
 		CPAN::SQLite v0.199
@@ -51,8 +53,8 @@ The default is: CPANPLUS
 	# TODO add CPANIDX?
 	has 'cpan_backend' => (
 		is	=> 'rw',
-		isa	=> enum( [ qw( CPANPLUS CPAN CPANSQLite ) ] ),
-		default	=> 'CPANPLUS',
+		isa	=> enum( [ qw( MetaDB CPANPLUS CPAN CPANSQLite ) ] ),
+		default	=> 'MetaDB',
 		trigger => \&_clean_cpan_backend,
 	);
 
@@ -476,7 +478,9 @@ sub _known_cpan {
 	}
 
 	# Select the backend?
-	if ( $self->cpan_backend eq 'CPANPLUS' ) {
+	if ( $self->cpan_backend eq 'MetaDB' ) {
+		return $self->_known_cpan_metadb( $module );
+	} elsif ( $self->cpan_backend eq 'CPANPLUS' ) {
 		return $self->_known_cpan_cpanplus( $module );
 	} elsif ( $self->cpan_backend eq 'CPAN' ) {
 		return $self->_known_cpan_cpan( $module );
@@ -487,10 +491,35 @@ sub _known_cpan {
 	}
 }
 
+sub _known_cpan_metadb {
+	my( $self, $module ) = @_;
+	my $cache = $self->_cache->{'cpan'};
+	$Test->diag( "cpan:MetaDB check for $module" ) if $self->verbose;
+	# init the backend ( and set some options )
+	if ( ! exists $cache->{'.'} ) {
+		eval {
+			$cache->{'.'} = CPAN::Common::Index::MetaDB->new;
+		};
+		if ( $@ ) {
+			$Test->diag( "Unable to load MetaDB - $@" ) if $self->verbose;
+			if ( $self->cpan_backend_auto ) {
+				$self->cpan_backend( 'CPANPLUS' );
+				return $self->_known_cpan_cpanplus( $module );
+			} else {
+				$self->_backend_err( 1 );
+				return;
+			}
+		}
+	}
+
+	$cache->{$module} = defined $cache->{'.'}->search_packages( { 'package' => $module } ) ? 1 : 0;
+	return $cache->{$module};
+}
+
 sub _known_cpan_cpanplus {
 	my( $self, $module ) = @_;
 	my $cache = $self->_cache->{'cpan'};
-
+	$Test->diag( "cpan:CPANPLUS check for $module" ) if $self->verbose;
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
@@ -513,7 +542,7 @@ sub _known_cpan_cpanplus {
 			$cache->{'.'} = CPANPLUS::Backend->new( $cpanconfig );
 		};
 		if ( $@ ) {
-			warn "Unable to load CPANPLUS - $@" if $self->verbose;
+			$Test->diag( "Unable to load CPANPLUS - $@" ) if $self->verbose;
 			if ( $self->cpan_backend_auto ) {
 				$self->cpan_backend( 'CPAN' );
 				return $self->_known_cpan_cpan( $module );
@@ -527,7 +556,7 @@ sub _known_cpan_cpanplus {
 	my $result;
 	eval { local $SIG{'__WARN__'} = sub { return }; $result = $cache->{'.'}->parse_module( 'module' => $module ) };
 	if ( $@ ) {
-		warn "Unable to use CPANPLUS - $@" if $self->verbose;
+		$Test->diag( "Unable to use CPANPLUS - $@" ) if $self->verbose;
 		if ( $self->cpan_backend_auto ) {
 			$self->cpan_backend( 'CPAN' );
 			return $self->_known_cpan_cpan( $module );
@@ -548,7 +577,7 @@ sub _known_cpan_cpanplus {
 sub _known_cpan_cpan {
 	my( $self, $module ) = @_;
 	my $cache = $self->_cache->{'cpan'};
-
+	$Test->diag( "cpan:CPAN check for $module" ) if $self->verbose;
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
@@ -585,7 +614,7 @@ sub _known_cpan_cpan {
 			$cache->{'.'} = $CPAN::META->{'readwrite'}->{'CPAN::Module'};
 		};
 		if ( $@ ) {
-			warn "Unable to load CPAN - $@" if $self->verbose;
+			$Test->diag( "Unable to load CPAN - $@" ) if $self->verbose;
 			if ( $self->cpan_backend_auto ) {
 				$self->cpan_backend( 'CPANSQLite' );
 				return $self->_known_cpan_cpansqlite( $module );
@@ -608,7 +637,7 @@ sub _known_cpan_cpan {
 sub _known_cpan_cpansqlite {
 	my( $self, $module ) = @_;
 	my $cache = $self->_cache->{'cpan'};
-
+	$Test->diag( "cpan:CPANSQLite check for $module" ) if $self->verbose;
 	# init the backend ( and set some options )
 	if ( ! exists $cache->{'.'} ) {
 		eval {
@@ -626,9 +655,9 @@ sub _known_cpan_cpansqlite {
 			$cache->{'.'} = CPAN::SQLite->new;
 		};
 		if ( $@ ) {
-			warn "Unable to load CPANSQLite - $@" if $self->verbose;
+			$Test->diag( "Unable to load CPANSQLite - $@" ) if $self->verbose;
 			if ( $self->cpan_backend_auto ) {
-				warn "Unable to use any CPAN backend, disabling searches!" if $self->verbose;
+				$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
 				$self->check_cpan( 0 );
 				$self->cpan_section_err( 1 );
 			}
@@ -641,9 +670,9 @@ sub _known_cpan_cpansqlite {
 	my $result;
 	eval { local $SIG{'__WARN__'} = sub { return }; $result = $cache->{'.'}->query( 'mode' => 'module', name => $module, max_results => 1 ); };
 	if ( $@ ) {
-		warn "Unable to use CPANSQLite - $@" if $self->verbose;
+		$Test->diag( "Unable to use CPANSQLite - $@" ) if $self->verbose;
 		if ( $self->cpan_backend_auto ) {
-			warn "Unable to use any CPAN backend, disabling searches!" if $self->verbose;
+			$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
 			$self->check_cpan( 0 );
 			$self->cpan_section_err( 1 );
 		}
