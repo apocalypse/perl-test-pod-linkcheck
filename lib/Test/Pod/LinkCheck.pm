@@ -37,7 +37,7 @@ has 'check_cpan' => (
 
 =attr cpan_backend
 
-Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPAN, CPANSQLite, MetaDB, and MetaCPAN.
+Selects the CPAN backend to use for querying modules. The available ones are: CPANPLUS, CPAN, CPANSQLite, MetaDB, MetaCPAN, and CPANIDX.
 
 The default is: CPANPLUS
 
@@ -48,13 +48,13 @@ The default is: CPANPLUS
 		CPAN::Common::Index::MetaDB v0.005
 		MetaCPAN::API::Tiny v1.131730
 		MetaCPAN::Client v1.007001
+		LWP::UserAgent v6.06
 
 =cut
 
-	# TODO add CPANIDX?
 	has 'cpan_backend' => (
 		is	=> 'rw',
-		isa	=> enum( [ qw( CPANPLUS CPAN CPANSQLite MetaDB MetaCPAN ) ] ),
+		isa	=> enum( [ qw( CPANPLUS CPAN CPANSQLite MetaDB MetaCPAN CPANIDX ) ] ),
 		default	=> 'CPANPLUS',
 		trigger => \&_clean_cpan_backend,
 	);
@@ -493,6 +493,45 @@ sub _known_cpan {
 	}
 }
 
+sub _known_cpan_cpanidx {
+	my( $self, $module ) = @_;
+	my $cache = $self->_cache->{'cpan'};
+#	$Test->diag( "cpan:CPANIDX check for $module" ) if $self->verbose;
+	if ( ! exists $cache->{'.'} ) {
+		eval {
+			# Wacky format so dzil will not autoprereq it
+			require 'LWP/UserAgent.pm';
+
+			$cache->{'.'} = LWP::UserAgent->new( keep_alive => 1 );
+		};
+		if ( $@ ) {
+			$Test->diag( "Unable to load LWP - $@" ) if $self->verbose;
+			if ( $self->cpan_backend_auto ) {
+				$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
+				$self->check_cpan( 0 );
+				$self->cpan_section_err( 1 );
+			} else {
+				$self->_backend_err( 1 );
+			}
+			return;
+		}
+	}
+
+	eval {
+		my $res = $cache->{'.'}->get("http://cpanidx.org/cpanidx/json/mod/$module");
+		if ( $res->is_success ) {
+			$cache->{$module} = 1;
+		} else {
+			$cache->{$module} = 0;
+		}
+	};
+	if ( $@ ) {
+		$Test->diag( "Unable to find $module on CPANIDX: $@" ) if $self->verbose;
+		$cache->{$module} = 0;
+	}
+	return $cache->{$module};
+}
+
 sub _known_cpan_metacpan {
 	my( $self, $module ) = @_;
 	my $cache = $self->_cache->{'cpan'};
@@ -515,13 +554,12 @@ sub _known_cpan_metacpan {
 			if ( $@ ) {
 				$Test->diag( "Unable to load MetaCPAN::Client - $@" ) if $self->verbose;
 				if ( $self->cpan_backend_auto ) {
-					$Test->diag( "Unable to use any CPAN backend, disabling searches!" ) if $self->verbose;
-					$self->check_cpan( 0 );
-					$self->cpan_section_err( 1 );
+					$self->cpan_backend( 'CPANIDX' );
+					return $self->_known_cpan_cpanidx( $module );
 				} else {
 					$self->_backend_err( 1 );
+					return;
 				}
-				return;
 			}
 		}
 	}

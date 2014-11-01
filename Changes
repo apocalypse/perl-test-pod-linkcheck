@@ -8,6 +8,7 @@ Revision history for {{$dist->name}}
 	Automatically enable verbose if $ENV{HARNESS_IS_VERBOSE} or $ENV{TEST_VERBOSE} ( thanks RT#76342 )
 	Add a new backend 'MetaDB' which queries the same online database cpanminus uses as a last resort ( thanks RT#77976 )
 	Add a new backend 'MetaCPAN' which queries MetaCPAN as a last last resort :)
+	Add a new backend 'CPANIDX' which queries cpanidx.org as a last last last resort ;)
 
 0.007	2011-04-22 04:31:32 UTC
 
