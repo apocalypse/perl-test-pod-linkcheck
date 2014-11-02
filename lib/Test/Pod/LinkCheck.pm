@@ -527,13 +527,13 @@ sub _known_cpan_cpanidx {
 
 	eval {
 		my $res = $cache->{'.'}->get("http://cpanidx.org/cpanidx/json/mod/$module");
-		if ( $res->isa( 'HTTP::Response' ) ? $res->is_success : $res->{success} ) {
+		if ( ref( $res ) ne 'HASH' ? $res->is_success : $res->{success} ) {
 			# Did we get a hit?
 # apoc@box:~$ perl -MHTTP::Tiny -MData::Dumper::Concise -e 'print Dumper( HTTP::Tiny->new->get("http://cpanidx.org/cpanidx/json/mod/POE")->{content} )'
 # "[\n   {\n      \"dist_vers\" : \"1.365\",\n      \"dist_name\" : \"POE\",\n      \"cpan_id\" : \"RCAPUTO\",\n      \"mod_vers\" : \"1.365\",\n      \"dist_file\" : \"R/RC/RCAPUTO/POE-1.365.tar.gz\",\n      \"mod_name\" : \"POE\"\n   }\n]\n"
 # apoc@box:~$ perl -MHTTP::Tiny -MData::Dumper::Concise -e 'print Dumper( HTTP::Tiny->new->get("http://cpanidx.org/cpanidx/json/mod/Floo::Bar")->{content} )'
 # "[]\n"
-			if ( length( $res->isa( 'HTTP::Response' ) ? $res->decoded_content : $res->{content} ) > 5 ) {
+			if ( length( ref( $res ) ne 'HASH' ? $res->decoded_content : $res->{content} ) > 5 ) {
 				$cache->{$module} = 1;
 			} else {
 				$cache->{$module} = 0;
