@@ -470,7 +470,7 @@ sub _known_cpan {
 		return;
 	}
 
-	$Test->diag( "cpan check for $module" ) if $self->verbose;
+#	$Test->diag( "cpan check for $module" ) if $self->verbose;
 
 	# is the answer cached already?
 	if ( exists $self->_cache->{'cpan'}{ $module } ) {
